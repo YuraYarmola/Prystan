@@ -67,12 +67,15 @@ chmod і drag-and-drop — і всередині контейнерів, і на
 
 | Ваша система | Який файл качати |
 |---|---|
-| **Windows 10/11, 64-біт** — майже всі ПК | `prystan-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
-| Windows на ARM — Surface Pro X, Dev Kit | `prystan-vX.Y.Z-aarch64-pc-windows-msvc.zip` |
-| Windows 32-біт — старі машини | `prystan-vX.Y.Z-i686-pc-windows-msvc.zip` |
-| **Mac на Apple Silicon** — M1…M4 | `prystan-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
-| Mac на Intel — до 2020 року | `prystan-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
-| **Linux, 64-біт** | `prystan-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| **Windows 10/11** — майже всі ПК | `Prystan-vX.Y.Z-Windows-x64.zip` |
+| Windows на ARM — Surface Pro X, Dev Kit | `Prystan-vX.Y.Z-Windows-ARM64.zip` |
+| Windows 32-біт — старі машини | `Prystan-vX.Y.Z-Windows-32bit.zip` |
+| **Mac на Apple Silicon** — M1…M4 | `Prystan-vX.Y.Z-macOS-AppleSilicon.tar.gz` |
+| Mac на Intel — до 2020 року | `Prystan-vX.Y.Z-macOS-Intel.tar.gz` |
+| **Linux, 64-біт** | `Prystan-vX.Y.Z-Linux-x64.tar.gz` |
+
+Якщо не впевнені — беріть **Windows-x64**, він підходить майже всім. ARM-версія на
+звичайному ПК просто не запуститься.
 
 Не знаєте, який у вас Mac?  → «Про цей Mac»: чип M1/M2/M3/M4 — беріть Apple Silicon,
 напис Intel — відповідно Intel.

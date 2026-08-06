@@ -89,12 +89,15 @@ binary, no installer and no runtime to set up.
 
 | Your system | File to download |
 |---|---|
-| **Windows 10/11, 64-bit** — almost every PC | `prystan-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
-| Windows on ARM — Surface Pro X, Dev Kit | `prystan-vX.Y.Z-aarch64-pc-windows-msvc.zip` |
-| Windows 32-bit — older machines | `prystan-vX.Y.Z-i686-pc-windows-msvc.zip` |
-| **Mac with Apple Silicon** — M1 through M4 | `prystan-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
-| Mac with Intel — before 2020 | `prystan-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
-| **Linux, 64-bit** | `prystan-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| **Windows 10/11** — almost every PC | `Prystan-vX.Y.Z-Windows-x64.zip` |
+| Windows on ARM — Surface Pro X, Dev Kit | `Prystan-vX.Y.Z-Windows-ARM64.zip` |
+| Windows 32-bit — older machines | `Prystan-vX.Y.Z-Windows-32bit.zip` |
+| **Mac with Apple Silicon** — M1 through M4 | `Prystan-vX.Y.Z-macOS-AppleSilicon.tar.gz` |
+| Mac with Intel — before 2020 | `Prystan-vX.Y.Z-macOS-Intel.tar.gz` |
+| **Linux, 64-bit** | `Prystan-vX.Y.Z-Linux-x64.tar.gz` |
+
+If you are unsure, take **Windows-x64** — it fits almost everyone. The ARM build
+simply will not start on a regular PC.
 
 Not sure which Mac you have?  → *About This Mac*: a chip called M1/M2/M3/M4 means
 Apple Silicon, anything saying Intel means the Intel build.
