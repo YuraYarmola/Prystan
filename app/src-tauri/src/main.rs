@@ -7,6 +7,7 @@ mod host;
 mod journal;
 mod logs;
 mod notify;
+mod procguard;
 mod resources;
 mod security;
 mod term;
@@ -212,7 +213,11 @@ fn spawn_ssh_tunnel(p: &Profile, local_port: u16) -> Result<Child, String> {
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     cmd.stderr(std::process::Stdio::piped());
-    cmd.spawn().map_err(|e| format!("не вдалося запустити ssh: {e}"))
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("не вдалося запустити ssh: {e}"))?;
+    procguard::guard(child.id());
+    Ok(child)
 }
 
 async fn wait_port(port: u16, mut tunnel: Option<&mut Child>) -> Result<(), String> {
@@ -318,6 +323,7 @@ fn disconnect_inner(state: &AppState, id: &str) {
     if let Some(mut e) = state.conns.lock().unwrap().remove(id) {
         e.events_task.abort();
         if let Some(t) = e.tunnel.as_mut() {
+            procguard::release(t.id());
             let _ = t.kill();
         }
     }
@@ -420,6 +426,13 @@ fn main() {
         }
     }
     let profiles_path = data_dir.join("profiles.json");
+
+    // прибираємо ssh-процеси, що лишились від аварійного завершення,
+    // і беремо всі майбутні під нагляд ОС
+    let swept = procguard::init(&data_dir);
+    if swept > 0 {
+        eprintln!("prystan: прибрано осиротілих ssh-процесів: {swept}");
+    }
 
     tauri::Builder::default()
         .manage(AppState {

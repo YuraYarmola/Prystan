@@ -132,6 +132,7 @@ pub fn spawn_agent(p: &Profile) -> Result<AgentHandle, String> {
     cmd.arg(AGENT_SCRIPT);
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("ssh-агент: {e}"))?;
+    crate::procguard::guard(child.id().unwrap_or(0));
     let stdin = child.stdin.take().unwrap();
     let mut stdout = child.stdout.take().unwrap();
 
@@ -707,6 +708,7 @@ pub async fn host_monitor_start(
     cmd.arg(MONITOR_SCRIPT);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("ssh: {e}"))?;
+    crate::procguard::guard(child.id().unwrap_or(0));
     let mut stdout = child.stdout.take().unwrap();
 
     let conn_c = conn.clone();
@@ -873,6 +875,7 @@ pub async fn host_term_open(
     cmd.env("TERM", "xterm-256color");
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| format!("ssh: {e}"))?;
+    crate::procguard::guard(child.process_id().unwrap_or(0));
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;

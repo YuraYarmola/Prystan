@@ -23,6 +23,12 @@ ureq = { version = "2", features = ["tls"] }
 # keyring вимагає різних бекендів на кожній платформі
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",          # CreateJobObjectW бере SECURITY_ATTRIBUTES
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

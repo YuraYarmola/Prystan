@@ -75,6 +75,7 @@ pub async fn forward_start(
         cmd.creation_flags(0x0800_0000);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         let child = cmd.spawn().map_err(|e| format!("ssh -L: {e}"))?;
+        crate::procguard::guard(child.id().unwrap_or(0));
 
         // чекаємо, поки порт відкриється
         let mut ok = false;
