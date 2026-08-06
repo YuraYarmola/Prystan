@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Prystan",
+  "version": "0.1.0",
+  "identifier": "solutions.techchain.prystan",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Prystan — Docker і сервери",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 560
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

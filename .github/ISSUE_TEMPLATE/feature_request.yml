@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing code for a larger feature, please agree on the approach here —
+        the maintainer may decline changes that do not fit the project's direction.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the situation you run into, not the solution you imagine.
+      placeholder: "When a container keeps restarting, I cannot tell why without…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What you would like to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: Workarounds, or how another tool handles it.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fit
+      options:
+        - label: I checked [ROADMAP.md](../blob/main/ROADMAP.md) and [GAPS.md](../blob/main/GAPS.md) — this is not already planned
+        - label: I would be willing to work on this myself

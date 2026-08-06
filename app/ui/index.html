@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8" />
+<title>Prystan</title>
+<link rel="stylesheet" href="css/app.css" />
+<link rel="stylesheet" href="vendor/xterm.css" />
+<link rel="stylesheet" href="vendor/cm/codemirror.css" />
+<link rel="stylesheet" href="vendor/cm/material-darker.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">⚓ Pry<span>stan</span></div>
+    <button id="palette-btn" class="ghost" data-i18n="app.palette" data-i18n-title="app.palette.title">Ctrl+K</button>
+    <div class="spacer"></div>
+    <span class="badge" id="fwd-badge" style="display:none" data-i18n-title="app.tunnels">🔌 <b id="fwd-count">0</b></span>
+    <button id="settings-btn" class="ghost" data-i18n-title="set.title">⚙</button>
+    <button id="lang-btn" class="ghost" data-i18n-title="app.lang">UK</button>
+    <button id="theme-btn" class="ghost" data-i18n-title="app.theme">🌙</button>
+    <div class="meta" id="engine"></div>
+    <div class="badge" id="perf"></div>
+  </header>
+
+  <main>
+    <div id="left">
+      <div id="connbox"></div>
+      <div class="bar">
+        <input id="filter" data-i18n-ph="app.filter" />
+        <button id="refresh" data-i18n-title="app.refresh">⟳</button>
+      </div>
+      <div class="bar" id="quickbar">
+        <div class="seg" id="quick-filter">
+          <button data-q="all" class="on" data-i18n="quick.all" data-i18n-title="quick.all">Усі</button>
+          <button data-q="running" data-i18n-title="quick.running">▶</button>
+          <button data-q="stopped" data-i18n-title="quick.stopped">■</button>
+          <button data-q="unhealthy" data-i18n-title="quick.problem">⚠</button>
+        </div>
+        <span style="flex:1"></span>
+        <button id="bulk-toggle" class="ghost" data-i18n-title="bulk.toggle">☑</button>
+      </div>
+      <div id="tree"></div>
+      <div id="bulkbar" style="display:none">
+        <span id="bulk-count">0</span>
+        <span style="flex:1"></span>
+        <button data-b="start" data-i18n-title="bulk.start">▶</button>
+        <button data-b="stop" data-i18n-title="bulk.stop">■</button>
+        <button data-b="restart" data-i18n-title="bulk.restart">⟳</button>
+        <button data-b="rm" class="danger" data-i18n-title="bulk.rm">🗑</button>
+      </div>
+    </div>
+
+    <div id="right">
+      <div id="detail-header"></div>
+      <div id="tabs" style="display:none"></div>
+      <div id="content">
+        <div class="placeholder" id="welcome">
+          <div style="font-size:15px;margin-bottom:10px" data-i18n="welcome.title">Prystan</div>
+          <span data-i18n="welcome.text"></span><br>
+          <span class="hint" data-i18n="welcome.hint"></span>
+        </div>
+
+        <div class="pane" id="pane-logs">
+          <div class="toolbar">
+            <input id="log-search" data-i18n-ph="logs.search" style="width:220px" />
+            <span id="log-matches" class="hint" style="min-width:70px"></span>
+            <div class="seg" id="log-level">
+              <button data-lvl="all" class="on" data-i18n="quick.all">Всі</button>
+              <button data-lvl="warn">⚠ <span id="cnt-warn">0</span></button>
+              <button data-lvl="err">⛔ <span id="cnt-err">0</span></button>
+            </div>
+            <button id="log-deep" data-i18n="logs.deepBtn" data-i18n-title="logs.deep">🔎</button>
+            <select id="log-tail">
+              <option value="500">500</option>
+              <option value="2000">2000</option>
+              <option value="10000">10000</option>
+            </select>
+            <span style="flex:1"></span>
+            <button id="log-wrap" data-i18n-title="logs.wrap">↩</button>
+            <button id="log-follow">⏸</button>
+            <button id="log-clear" data-i18n-title="logs.clear">✕</button>
+            <button id="log-export" data-i18n-title="logs.export">⇩</button>
+          </div>
+          <div id="logs"></div>
+        </div>
+
+        <div class="pane" id="pane-files">
+          <div class="toolbar" style="flex-wrap:nowrap">
+            <button id="fs-up" data-i18n-title="files.up">⬆</button>
+            <input id="fs-path" class="mono-input" style="flex:1;min-width:120px" spellcheck="false" data-i18n-title="files.path" />
+            <button id="fs-copy" data-i18n-title="files.copy">📋</button>
+            <input id="fs-filter" data-i18n-ph="files.filter" style="width:120px" />
+            <button id="fs-refresh" data-i18n-title="common.refresh">⟳</button>
+            <button id="fs-mkdir" data-i18n-title="files.mkdir">+📁</button>
+            <button id="fs-upload-btn" data-i18n-title="files.upload">⇪</button>
+            <input type="file" id="fs-upload-input" multiple style="display:none" />
+          </div>
+          <div id="files-table"></div>
+          <div id="drop-hint" data-i18n="files.drop"></div>
+        </div>
+
+        <div class="pane" id="pane-term">
+          <div class="toolbar">
+            <div id="term-tabs"></div>
+            <button id="term-new" data-i18n-title="term.new">＋</button>
+            <select id="term-shell" data-i18n-title="term.shell">
+              <option value="/bin/bash" selected>bash</option>
+              <option value="/bin/sh">sh</option>
+              <option value="/bin/ash">ash</option>
+              <option value="/bin/zsh">zsh</option>
+            </select>
+            <span style="flex:1"></span>
+            <select id="term-snippets"></select>
+            <button id="term-snip-save" data-i18n-title="term.snipSave">💾</button>
+            <button id="term-suggest" data-i18n-title="term.suggest">💡</button>
+            <input id="term-search" data-i18n-ph="term.search" style="width:150px" />
+          </div>
+          <div id="term-wrap">
+            <div id="term-container"></div>
+            <div id="term-complete"></div>
+            <div id="term-overlay">
+              <div class="hint" data-i18n="term.closed"></div>
+              <button id="term-restart" class="primary" data-i18n="term.new"></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pane" id="pane-inspect"><div id="inspect"></div></div>
+
+        <div class="pane" id="pane-compose">
+          <div class="toolbar">
+            <button id="cm-up" class="primary" data-i18n="compose.up"></button>
+            <button id="cm-restart" data-i18n="compose.restart"></button>
+            <button id="cm-pull" data-i18n="compose.pull"></button>
+            <button id="cm-down" class="danger" data-i18n="compose.down"></button>
+            <span style="flex:1"></span>
+            <button id="cm-edit-compose" data-i18n="compose.editCompose"></button>
+            <button id="cm-edit-env" data-i18n="compose.editEnv"></button>
+          </div>
+          <div id="cm-workdir" class="hint" style="padding:6px 12px"></div>
+          <div id="cm-output"></div>
+        </div>
+
+        <div class="pane" id="pane-images">
+          <div class="toolbar">
+            <input id="pull-name" data-i18n-ph="res.pullPlaceholder" style="width:240px" />
+            <button id="pull-btn" class="primary">⇩ pull</button>
+            <button id="build-btn" data-i18n="res.build"></button>
+            <button id="create-btn" data-i18n="res.newContainer"></button>
+            <button id="registry-btn" data-i18n="reg.title"></button>
+            <span style="flex:1"></span>
+            <button id="prune-images" class="danger" data-i18n="res.prune"></button>
+          </div>
+          <div class="respane" id="images-table"></div>
+          <div id="pull-log"></div>
+        </div>
+
+        <div class="pane" id="pane-volumes">
+          <div class="toolbar"><span style="flex:1"></span><button id="prune-volumes" class="danger" data-i18n="res.prune"></button></div>
+          <div class="respane" id="volumes-table"></div>
+        </div>
+
+        <div class="pane" id="pane-networks"><div class="respane" id="networks-table"></div></div>
+        <div class="pane" id="pane-df"><div class="respane" id="df-body" style="padding:16px"></div></div>
+        <div class="pane" id="pane-srv-stats"><div class="respane" id="srv-stats" style="padding:16px"></div></div>
+
+        <div class="pane" id="pane-srv-proc">
+          <div class="toolbar">
+            <input id="proc-filter" data-i18n-ph="srv.procFilter" style="width:200px" />
+            <select id="proc-sort">
+              <option value="cpu" data-i18n="srv.byCpu"></option>
+              <option value="mem" data-i18n="srv.byMem"></option>
+            </select>
+            <span style="flex:1"></span>
+            <span id="proc-updated" class="hint">🔴 live</span>
+          </div>
+          <div class="respane" id="proc-table"></div>
+        </div>
+
+        <div class="pane" id="pane-dash"><div class="respane" id="dash-body" style="padding:16px"></div></div>
+
+        <!-- журнал дій -->
+        <div class="pane" id="pane-journal">
+          <div class="toolbar">
+            <input id="jr-filter" data-i18n-ph="files.filter" style="width:200px" />
+            <span style="flex:1"></span>
+            <span id="jr-count" class="hint"></span>
+            <button id="jr-refresh" data-i18n-title="common.refresh">⟳</button>
+            <button id="jr-clear" class="danger" data-i18n="logs.clear"></button>
+          </div>
+          <div class="respane" id="jr-table"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span><span id="eventlight"></span><span id="lastevent" data-i18n="events.waiting"></span></span>
+    <span id="count"></span>
+    <span style="margin-left:auto"><span id="ro-badge" class="badge" style="display:none;border-color:var(--yellow);color:var(--yellow)" data-i18n="app.readonly"></span> Tauri 2 · Rust · bollard</span>
+  </footer>
+
+  <div class="modal-back" id="palette-modal">
+    <div class="modal" style="width:620px;align-self:flex-start;margin-top:12vh">
+      <div class="mbody" style="padding:0">
+        <div style="display:flex;align-items:center">
+          <input id="palette-input" data-i18n-ph="pal.placeholder" style="flex:1;border:none;border-radius:0;padding:14px 16px;font-size:14px" />
+          <span class="x" data-close="palette-modal" data-i18n-title="editor.close" style="padding:0 14px;font-size:18px;cursor:pointer;color:var(--dim)">✕</span>
+        </div>
+        <div id="palette-list"></div>
+        <div class="hint" style="padding:6px 16px;border-top:1px solid var(--border)" data-i18n="pal.hints"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="conn-modal">
+    <div class="modal" style="width:600px">
+      <div class="mhead"><span data-i18n="conn.title"></span> <span class="x" data-close="conn-modal">✕</span></div>
+      <div class="mbody">
+        <div class="plist" id="profile-list"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button id="import-contexts" data-i18n="conn.import"></button>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px">
+          <div style="font-weight:600;margin-bottom:10px" id="pf-title"></div>
+          <div class="form-grid">
+            <label data-i18n="conn.name"></label><input id="pf-name" />
+            <label data-i18n="conn.type"></label>
+            <select id="pf-kind"><option value="ssh">SSH</option><option value="tcp">TCP</option></select>
+            <label id="l-host" data-i18n="conn.host"></label><input id="pf-host" placeholder="168.119.96.236" />
+            <label id="l-port" data-i18n="conn.port"></label><input id="pf-port" style="width:100px" />
+            <label id="l-user" data-i18n="conn.user"></label><input id="pf-user" placeholder="root" />
+            <label id="l-key" data-i18n="conn.key"></label><input id="pf-key" data-i18n-ph="conn.keyHint" />
+            <label data-i18n="conn.protect"></label>
+            <label style="color:var(--text);display:flex;gap:8px;align-items:center;font-size:12px">
+              <input type="checkbox" id="pf-readonly" style="width:auto" /> <span data-i18n="conn.readonlyLabel"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="mfoot">
+        <button data-close="conn-modal" data-i18n="conn.cancel"></button>
+        <button id="pf-save" class="primary" data-i18n="conn.save"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="create-modal">
+    <div class="modal" style="width:600px">
+      <div class="mhead"><span data-i18n="create.title"></span> <span class="x" data-close="create-modal">✕</span></div>
+      <div class="mbody">
+        <div class="form-grid">
+          <label data-i18n="create.image"></label><input id="cr-image" placeholder="redis:7-alpine" />
+          <label data-i18n="create.name"></label><input id="cr-name" placeholder="my-redis" />
+          <label data-i18n="create.ports"></label><input id="cr-ports" placeholder="8080:80, 5432:5432" />
+          <label data-i18n="create.volumes"></label><input id="cr-vols" placeholder="/data:/var/lib/data" />
+          <label data-i18n="create.env"></label><input id="cr-env" placeholder="KEY=value, OTHER=1" />
+          <label data-i18n="create.cmd"></label><input id="cr-cmd" data-i18n-ph="create.cmdHint" />
+          <label data-i18n="create.restart"></label>
+          <select id="cr-restart">
+            <option value="no">no</option>
+            <option value="unless-stopped">unless-stopped</option>
+            <option value="always">always</option>
+            <option value="on-failure">on-failure</option>
+          </select>
+          <label data-i18n="create.start"></label>
+          <label style="color:var(--text);display:flex;gap:8px;align-items:center;font-size:12px">
+            <input type="checkbox" id="cr-start" checked style="width:auto" /> <span data-i18n="create.startNow"></span>
+          </label>
+        </div>
+        <div class="hint" style="margin-top:12px" data-i18n="create.equivalent"></div>
+        <pre id="cr-preview" class="cmdprev"></pre>
+      </div>
+      <div class="mfoot">
+        <button data-close="create-modal" data-i18n="conn.cancel"></button>
+        <button id="cr-go" class="primary" data-i18n="create.go"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="build-modal">
+    <div class="modal" style="width:640px">
+      <div class="mhead"><span data-i18n="build.title"></span> <span class="x" data-close="build-modal">✕</span></div>
+      <div class="mbody">
+        <div class="form-grid">
+          <label data-i18n="build.dir"></label><input id="bd-dir" class="mono-input" placeholder="E:\proj\myapp" />
+          <label data-i18n="build.file"></label><input id="bd-file" placeholder="Dockerfile" />
+          <label data-i18n="build.tag"></label><input id="bd-tag" placeholder="myapp:dev" />
+        </div>
+        <div class="hint" style="margin-top:10px" data-i18n="build.hint"></div>
+        <div id="bd-output"></div>
+      </div>
+      <div class="mfoot">
+        <button data-close="build-modal" data-i18n="editor.close"></button>
+        <button id="bd-go" class="primary" data-i18n="build.go"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="deep-modal">
+    <div class="modal" style="width:80vw;height:80vh">
+      <div class="mhead">
+        <span data-i18n="deep.title"></span> <span id="deep-target" class="hint"></span>
+        <span class="x" data-close="deep-modal">✕</span>
+      </div>
+      <div class="mbody" style="display:flex;flex-direction:column;gap:0;padding:0">
+        <div class="toolbar">
+          <input id="deep-q" data-i18n-ph="deep.q" style="flex:1" />
+          <label class="chk"><input type="checkbox" id="deep-re" /> regex</label>
+          <label class="chk"><input type="checkbox" id="deep-cs" /> Aa</label>
+          <select id="deep-since">
+            <option value="" data-i18n="deep.all"></option>
+            <option value="3600" data-i18n="deep.hour"></option>
+            <option value="86400" data-i18n="deep.day"></option>
+            <option value="604800" data-i18n="deep.week"></option>
+          </select>
+          <button id="deep-go" class="primary" data-i18n="deep.go"></button>
+        </div>
+        <div id="deep-stat" class="hint" style="padding:6px 12px"></div>
+        <div id="deep-results"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="ask-modal">
+    <div class="modal" style="width:440px">
+      <div class="mhead" id="ask-title"></div>
+      <div class="mbody">
+        <div id="ask-text" style="user-select:text"></div>
+        <input id="ask-input" style="width:100%;margin-top:10px;display:none" />
+      </div>
+      <div class="mfoot">
+        <button id="ask-no" data-i18n="common.cancel"></button>
+        <button id="ask-yes" class="primary" data-i18n="common.ok"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-back" id="editor-modal">
+    <div class="modal">
+      <div class="mhead" style="gap:10px">
+        <span id="editor-dirty" style="color:var(--yellow);display:none" data-i18n-title="editor.dirty">●</span>
+        <span id="editor-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34%"></span>
+        <input id="editor-search" data-i18n-ph="editor.search" style="flex:1;max-width:240px;margin-left:auto" />
+        <span id="editor-search-cnt" class="hint" style="min-width:56px"></span>
+        <button id="editor-prev" data-i18n-title="editor.prev">↑</button>
+        <button id="editor-next" data-i18n-title="editor.next">↓</button>
+        <span class="x" id="editor-close">✕</span>
+      </div>
+      <div class="mbody"><textarea id="editor-ta"></textarea></div>
+      <div class="mfoot">
+        <span id="editor-note"></span>
+        <label class="chk" data-i18n-title="editor.backup"><input type="checkbox" id="editor-backup" checked /> .bak</label>
+        <button id="editor-download" data-i18n="editor.toDisk"></button>
+        <button id="editor-save" class="primary" data-i18n="editor.save"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- шари образу -->
+  <div class="modal-back" id="layers-modal">
+    <div class="modal" style="width:82vw;max-height:82vh">
+      <div class="mhead"><span data-i18n="img.layers"></span> <span id="layers-title" class="hint"></span>
+        <span class="x" data-close="layers-modal">✕</span></div>
+      <div class="mbody" style="padding:0"><div id="layers-body"></div></div>
+    </div>
+  </div>
+
+  <!-- сканування вразливостей -->
+  <div class="modal-back" id="scan-modal">
+    <div class="modal" style="width:86vw;height:84vh">
+      <div class="mhead"><span data-i18n="scan.title"></span> <span id="scan-title" class="hint"></span>
+        <span class="x" data-close="scan-modal">✕</span></div>
+      <div class="mbody" style="padding:0;display:flex;flex-direction:column">
+        <div id="scan-summary" style="padding:10px 14px"></div>
+        <div class="toolbar" id="scan-tools" style="display:none">
+          <input id="scan-filter" data-i18n-ph="files.filter" style="width:200px" />
+          <div class="seg" id="scan-sev">
+            <button data-s="all" class="on" data-i18n="quick.all"></button>
+            <button data-s="CRITICAL">CRITICAL</button>
+            <button data-s="HIGH">HIGH</button>
+            <button data-s="fix" data-i18n="scan.fixable"></button>
+          </div>
+        </div>
+        <div id="scan-body" style="flex:1;overflow:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- реєстри -->
+  <div class="modal-back" id="registry-modal">
+    <div class="modal" style="width:560px">
+      <div class="mhead"><span data-i18n="reg.title"></span> <span class="x" data-close="registry-modal">✕</span></div>
+      <div class="mbody">
+        <div class="plist" id="registry-list"></div>
+        <div style="border-top:1px solid var(--border);padding-top:12px">
+          <div class="form-grid">
+            <label data-i18n="reg.server"></label><input id="rg-server" placeholder="ghcr.io / registry.gitlab.com / docker.io" />
+            <label data-i18n="conn.user"></label><input id="rg-user" />
+            <label data-i18n="reg.password"></label><input id="rg-pass" type="password" placeholder="token" />
+          </div>
+          <div class="hint" style="margin-top:8px" data-i18n="reg.hint"></div>
+        </div>
+      </div>
+      <div class="mfoot">
+        <button data-close="registry-modal" data-i18n="conn.cancel"></button>
+        <button id="rg-save" class="primary" data-i18n="conn.save"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- налаштування (Telegram) -->
+  <div class="modal-back" id="settings-modal">
+    <div class="modal" style="width:560px">
+      <div class="mhead"><span data-i18n="set.title"></span> <span class="x" data-close="settings-modal">✕</span></div>
+      <div class="mbody">
+        <div style="font-weight:600;margin-bottom:10px">📨 <span data-i18n="set.telegram"></span></div>
+        <div class="form-grid">
+          <label data-i18n="set.token"></label><input id="tg-token" type="password" placeholder="123456:AA..." />
+          <label>chat_id</label><input id="tg-chat" placeholder="-1001234567890" />
+        </div>
+        <div class="hint" style="margin-top:8px" data-i18n="set.tgHint"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+          <button id="tg-save" class="primary" data-i18n="conn.save"></button>
+          <button id="tg-test" data-i18n="set.test"></button>
+          <button id="tg-forget" class="danger" data-i18n="set.forget"></button>
+          <span id="tg-state" class="hint"></span>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+          <label class="chk"><input type="checkbox" id="tg-on-alerts" /> <span data-i18n="set.onAlerts"></span></label>
+        </div>
+      </div>
+      <div class="mfoot"><button data-close="settings-modal" data-i18n="editor.close"></button></div>
+    </div>
+  </div>
+
+  <div id="toast-wrap"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-search.js"></script>
+<script src="vendor/cm/codemirror.js"></script>
+<script src="vendor/cm/searchcursor.js"></script>
+<script src="vendor/cm/mode/shell.js"></script>
+<script src="vendor/cm/mode/javascript.js"></script>
+<script src="vendor/cm/mode/python.js"></script>
+<script src="vendor/cm/mode/yaml.js"></script>
+<script src="vendor/cm/mode/xml.js"></script>
+<script src="vendor/cm/mode/css.js"></script>
+<script src="vendor/cm/mode/htmlmixed.js"></script>
+<script src="vendor/cm/mode/dockerfile.js"></script>
+<script src="vendor/cm/mode/nginx.js"></script>
+<script src="vendor/cm/mode/sql.js"></script>
+<script src="vendor/cm/mode/markdown.js"></script>
+<script src="vendor/cm/mode/properties.js"></script>
+
+<script src="js/i18n.js"></script>
+<script src="js/core.js"></script>
+<script src="js/conn.js"></script>
+<script src="js/logs.js"></script>
+<script src="js/files.js"></script>
+<script src="js/term.js"></script>
+<script src="js/server.js"></script>
+<script src="js/resources.js"></script>
+<script src="js/extras.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

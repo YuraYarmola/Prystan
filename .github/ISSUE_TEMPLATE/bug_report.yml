@@ -1,0 +1,63 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please do **not** use this form for
+        security vulnerabilities — see [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: |
+        1. Connected to a server over SSH
+        2. Opened the Files tab of a container
+        3. Expected the directory listing, got "шлях не знайдено"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Prystan version
+      placeholder: "0.1.0 (or commit hash if built from source)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Local socket / named pipe
+        - SSH
+        - TCP (with or without TLS)
+        - Several of the above
+    validations:
+      required: true
+
+  - type: input
+    id: docker
+    attributes:
+      label: Docker version on the target
+      description: Output of `docker version --format '{{.Server.Version}}'`
+      placeholder: "29.5.3"
+
+  - type: input
+    id: os
+    attributes:
+      label: Your OS
+      placeholder: "Windows 11 24H2"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors, journal entries or screenshots
+      description: |
+        The action journal (JOURNAL section) often shows the failing operation.
+        Please remove server addresses and secrets before pasting.
+      render: text

@@ -1,0 +1,306 @@
+"use strict";
+/* Підключення: профілі, чіпи, імпорт контекстів, port-forward */
+
+let editingProfile = null;
+const retry = {};   // id -> { timer, attempt }
+
+async function loadProfiles() {
+  S.profiles = await invoke("list_profiles");
+  renderConnBox();
+  renderProfileList();
+}
+
+/**
+ * @param {string} id
+ * @param {object} opts  silent — без тостів і перемикання (фонове відновлення)
+ *                       manual — користувач натиснув сам (вмикає autoconnect)
+ */
+async function connectProfile(id, opts = {}) {
+  const p = S.profiles.find(x => x.id === id);
+  if (!p) return false;
+  if (S.conns[id]?.up || S.conns[id]?.connecting) return true;
+
+  S.conns[id] = { connecting: true };
+  renderConnBox();
+  try {
+    const info = await invoke("connect", { profileId: id });
+    S.conns[id] = { up: true, info };
+    clearRetry(id);
+    if (opts.manual !== false) await setWanted(id, true);
+    if (!opts.silent) {
+      toast(`${t("conn.connectedTo")}: ${p.name} (Docker ${info.version})`, "ok", 3000);
+      switchConn(id);
+    } else {
+      renderConnBox();
+      if (S.activeConn === id) refreshAll();
+    }
+    return true;
+  } catch (e) {
+    delete S.conns[id];
+    renderConnBox();
+    if (!opts.silent) toast(`${p.name}: ${e}`);
+    if (p.autoconnect) scheduleRetry(id);
+    return false;
+  }
+}
+
+/** Ручне відключення: запамʼятовуємо намір і більше не піднімаємо само. */
+async function disconnectProfile(id) {
+  clearRetry(id);
+  await setWanted(id, false);
+  try { await invoke("disconnect", { id }); } catch {}
+  delete S.conns[id];
+  if (S.activeConn === id) {
+    S.activeConn = null;
+    S.selected = null; S.selectedStack = null; S.view = "welcome";
+    $("engine").textContent = "";
+    $("ro-badge").style.display = "none";
+    renderDetail();
+  }
+  renderTree(); renderProfileList();
+  toast(`${t("conn.disconnected")}: ${S.profiles.find(p => p.id === id)?.name ?? id}`, "ok", 2500);
+}
+
+async function setWanted(id, on) {
+  const p = S.profiles.find(x => x.id === id);
+  if (!p || p.autoconnect === on) return;
+  S.profiles = await invoke("set_autoconnect", { id, on });
+}
+
+/* автовідновлення з наростаючою паузою: 5с → 10 → 20 → 40 → 60 (стеля) */
+function scheduleRetry(id) {
+  const p = S.profiles.find(x => x.id === id);
+  if (!p?.autoconnect) return;
+  const r = (retry[id] ||= { attempt: 0, timer: null });
+  if (r.timer) return;
+  r.attempt = Math.min(r.attempt + 1, 5);
+  const delay = Math.min(60000, 5000 * Math.pow(2, r.attempt - 1));
+  r.timer = setTimeout(async () => {
+    r.timer = null;
+    if (!S.profiles.find(x => x.id === id)?.autoconnect) return;
+    const ok = await connectProfile(id, { silent: true, manual: false });
+    if (ok) toast(`${t("conn.restored")}: ${p.name}`, "ok", 3000);
+  }, delay);
+  renderConnBox();
+}
+
+function clearRetry(id) {
+  if (retry[id]?.timer) clearTimeout(retry[id].timer);
+  delete retry[id];
+}
+
+/** Втратили зʼєднання (обрив тунелю / демон помер) — піднімаємо, якщо хотіли бути онлайн. */
+function markDown(id, reason) {
+  if (!S.conns[id]) return;
+  delete S.conns[id];
+  renderConnBox();
+  const p = S.profiles.find(x => x.id === id);
+  if (p?.autoconnect) {
+    toast(`${p.name}: ${reason} — ${t("conn.reconnecting")}`, "warn", 4000);
+    scheduleRetry(id);
+  }
+}
+
+/** Підняти всі зʼєднання, позначені autoconnect (старт застосунку). */
+async function restoreConnections() {
+  const wanted = S.profiles.filter(p => p.autoconnect);
+  if (!wanted.length) return [];
+  const res = await Promise.all(wanted.map(p => connectProfile(p.id, { silent: true, manual: false })));
+  const okIds = wanted.filter((_, i) => res[i]).map(p => p.id);
+  const failed = wanted.length - okIds.length;
+  if (okIds.length) toast(t("conn.restoredN", { n: okIds.length }), "ok", 3000);
+  if (failed) toast(t("conn.failedN", { n: failed }), "warn", 5000);
+  return okIds;
+}
+
+function switchConn(id) {
+  S.activeConn = id;
+  S.selected = null; S.selectedStack = null; S.view = "welcome";
+  S.bulkSel.clear();
+  const info = S.conns[id]?.info;
+  $("engine").textContent = info ? `Docker ${info.version} · API ${info.api_version} · ${info.os}` : "";
+  $("ro-badge").style.display = isReadonly() ? "inline-block" : "none";
+  persist();
+  renderDetail();
+  refreshAll();
+}
+
+function renderConnBox() {
+  const box = $("connbox");
+  box.innerHTML = "";
+
+  const sec = document.createElement("div");
+  sec.className = "section";
+  const upN = Object.values(S.conns).filter(c => c.up).length;
+  sec.innerHTML = `${S.connsCollapsed ? "▶" : "▼"} ${t("tree.connections")} <span class="cnt">${upN}/${S.profiles.length}</span><span class="plus" title="${esc(t("tree.connections.manage"))}">＋</span>`;
+  sec.onclick = e => {
+    if (e.target.classList.contains("plus")) {
+      editingProfile = null; fillProfileForm(null); renderProfileList();
+      $("conn-modal").classList.add("open");
+      return;
+    }
+    S.connsCollapsed = !S.connsCollapsed;
+    persist();
+    renderConnBox();
+  };
+  box.appendChild(sec);
+
+  if (!S.connsCollapsed) {
+    const chips = document.createElement("div");
+    chips.id = "connchips";
+    for (const p of S.profiles) {
+      const c = S.conns[p.id];
+      const waiting = !!retry[p.id]?.timer;
+      const chip = document.createElement("div");
+      chip.className = "connchip" + (S.activeConn === p.id ? " active" : "") + (waiting ? " waiting" : "");
+      chip.title = (p.kind === "ssh" ? `ssh ${p.user}@${p.host}:${p.port}` : p.kind === "tcp" ? `tcp ${p.host}:${p.port}` : t("conn.localSocket"))
+        + (p.readonly ? " · read-only" : "")
+        + (c?.up ? " · " + t("conn.connected") : waiting ? " · " + t("conn.reconnecting") : " · " + t("conn.clickConnect"));
+      chip.innerHTML =
+        `<span class="cdot ${c?.up ? "up" : (c?.connecting || waiting) ? "connecting" : ""}"></span>` +
+        `<span class="nm">${esc(p.name)}</span>` +
+        (p.readonly ? '<span class="ro" title="read-only">🔒</span>' : "") +
+        `<span class="pw" title="${esc(c?.up ? t("conn.disconnect") : t("conn.connect"))}">${c?.up ? "⏻" : "▶"}</span>`;
+      chip.onclick = e => {
+        if (e.target.classList.contains("pw")) {
+          e.stopPropagation();
+          return c?.up ? disconnectProfile(p.id) : connectProfile(p.id);
+        }
+        return c?.up ? switchConn(p.id) : connectProfile(p.id);
+      };
+      chips.appendChild(chip);
+    }
+    box.appendChild(chips);
+  }
+}
+
+function renderProfileList() {
+  const box = $("profile-list");
+  box.innerHTML = "";
+  for (const p of S.profiles) {
+    const up = S.conns[p.id]?.up;
+    const div = document.createElement("div");
+    div.className = "pitem";
+    div.innerHTML = `
+      <span style="width:8px;height:8px;border-radius:50%;background:${up ? "var(--green)" : "var(--dim)"};flex:none"></span>
+      <span class="pname">${esc(p.name)}${p.readonly ? " 🔒" : ""}</span>
+      <span class="pdetail">${p.kind === "ssh" ? `ssh ${esc(p.user)}@${esc(p.host)}:${p.port}` : p.kind === "tcp" ? `tcp ${esc(p.host)}:${p.port}` : t("conn.localSocket")}</span>
+      ${p.autoconnect ? `<span class="hint" title="${esc(t("conn.autoHint"))}">⟲</span>` : ""}
+      ${up ? `<button data-x="dis">${t("conn.disconnect")}</button>` : `<button data-x="con" class="primary">${t("conn.connect")}</button>`}
+      ${p.id !== "local" ? `<button data-x="edit">✎</button><button data-x="del" class="danger">🗑</button>` : ""}`;
+    div.querySelectorAll("button").forEach(b => b.onclick = async () => {
+      const x = b.dataset.x;
+      if (x === "con") { $("conn-modal").classList.remove("open"); connectProfile(p.id); }
+      if (x === "dis") { await disconnectProfile(p.id); renderProfileList(); }
+      if (x === "edit") { editingProfile = p; fillProfileForm(p); }
+      if (x === "del") { S.profiles = await invoke("delete_profile", { id: p.id }); renderTree(); renderProfileList(); }
+    });
+    box.appendChild(div);
+  }
+}
+
+function fillProfileForm(p) {
+  $("pf-title").textContent = p ? t("conn.edit") + ": " + p.name : t("conn.new");
+  $("pf-name").value = p?.name ?? "";
+  $("pf-kind").value = p?.kind === "tcp" ? "tcp" : "ssh";
+  $("pf-host").value = p?.host ?? "";
+  $("pf-port").value = p?.port || "";
+  $("pf-user").value = p?.user ?? "";
+  $("pf-key").value = p?.key_path ?? "";
+  $("pf-readonly").checked = !!p?.readonly;
+  updateKindFields();
+}
+function updateKindFields() {
+  const ssh = $("pf-kind").value === "ssh";
+  $("l-user").style.display = $("pf-user").style.display = ssh ? "" : "none";
+  $("l-key").style.display = $("pf-key").style.display = ssh ? "" : "none";
+  $("pf-port").placeholder = ssh ? "22" : "2375";
+}
+
+function wireConnUI() {
+  $("pf-kind").onchange = updateKindFields;
+  $("pf-save").onclick = async () => {
+    const kind = $("pf-kind").value;
+    const prof = {
+      id: editingProfile?.id ?? "",
+      name: $("pf-name").value.trim() || $("pf-host").value.trim(),
+      kind,
+      host: $("pf-host").value.trim(),
+      port: parseInt($("pf-port").value) || (kind === "ssh" ? 22 : 2375),
+      user: $("pf-user").value.trim(),
+      key_path: $("pf-key").value.trim(),
+      readonly: $("pf-readonly").checked,
+    };
+    if (!prof.host) return toast(t("conn.needHost"));
+    if (kind === "ssh" && !prof.user) return toast(t("conn.needUser"));
+    S.profiles = await invoke("save_profile", { profile: prof });
+    editingProfile = null;
+    fillProfileForm(null);
+    renderTree(); renderProfileList();
+    toast(t("conn.saved"), "ok", 2500);
+  };
+
+  /* B9 — імпорт docker contexts */
+  $("import-contexts").onclick = async () => {
+    try {
+      const list = await invoke("import_contexts");
+      if (!list.length) return toast(t("conn.noContexts"), "warn", 4000);
+      let added = 0;
+      for (const c of list) {
+        if (S.profiles.some(p => p.host === c.profile.host && p.kind === c.profile.kind)) continue;
+        S.profiles = await invoke("save_profile", {
+          profile: {
+            id: "", name: c.name, kind: c.profile.kind, host: c.profile.host,
+            port: c.profile.port, user: c.profile.user, key_path: "", readonly: false,
+          },
+        });
+        added++;
+      }
+      renderTree(); renderProfileList();
+      toast(added ? t("conn.imported", { n: added }) : t("conn.allImported"), "ok", 4000);
+    } catch (e) { toast("Імпорт: " + e); }
+  };
+}
+
+/* ── A5/A6: port-forward і відкриття в браузері ── */
+async function openContainerPort(c, mapping) {
+  // mapping: "8081:80" (host:container) з labels списку
+  const hostPort = parseInt(String(mapping).split(":")[0]);
+  if (!hostPort) return;
+  const prof = activeProfile();
+  try {
+    const r = await invoke("forward_start", {
+      conn: S.activeConn,
+      remoteHost: "127.0.0.1",
+      remotePort: hostPort,
+      label: `${c.name}:${hostPort}`,
+    });
+    await refreshForwards();
+    try {
+      await invoke("open_url", { url: r.url });
+      toast(prof.kind === "ssh"
+        ? `${t("ctr.openBrowser")}: ${r.url} → ${prof.host}:${hostPort}`
+        : `${t("ctr.openBrowser")}: ${r.url}`, "ok", 5000);
+    } catch (e) {
+      // браузер не відкрився — принаймні даємо готовий URL
+      await navigator.clipboard.writeText(r.url).catch(() => {});
+      toast(`${r.url} — ${t("ctr.urlCopied")} (${e})`, "warn", 9000);
+    }
+  } catch (e) { toast("Port-forward: " + e); }
+}
+
+async function refreshForwards() {
+  try {
+    S.forwards = await invoke("forward_list");
+    const badge = $("fwd-badge");
+    badge.style.display = S.forwards.length ? "inline-block" : "none";
+    $("fwd-count").textContent = S.forwards.length;
+    badge.title = S.forwards.map(f => `${f.label} → 127.0.0.1:${f.local_port}`).join("\n");
+  } catch {}
+}
+
+async function stopAllForwards() {
+  for (const f of S.forwards) await invoke("forward_stop", { key: f.key });
+  await refreshForwards();
+  toast(t("conn.tunnelsClosed"), "ok", 2500);
+}

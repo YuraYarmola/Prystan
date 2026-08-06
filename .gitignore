@@ -1,0 +1,34 @@
+# Rust / Cargo
+/app/src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# Tauri generated
+/app/src-tauri/gen/
+
+# Build artifacts
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# Локальні збірки, що клалися поруч із app/
+/app/*.exe
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Логи й тимчасове
+*.log
+err*.txt
+out*.txt
+/scratch/
