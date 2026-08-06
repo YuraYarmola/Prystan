@@ -1,2 +1,10 @@
+# Tauri + bollard дають глибокий стек у диспетчері команд —
+# стандартний 1 МБ на Windows переповнюється ще до показу вікна.
 [target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]
+
+[target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "link-args=/STACK:8388608"]

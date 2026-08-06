@@ -403,8 +403,7 @@ pub async fn host_fs_download(
     path: String,
 ) -> Result<String, String> {
     let p = get_profile(&state, &conn)?;
-    let downloads = std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join("Downloads");
+    let downloads = crate::files::downloads_dir();
     let base = path
         .replace('\\', "/")
         .rsplit('/')

@@ -167,9 +167,29 @@ fn free_port() -> u16 {
         .unwrap_or(23750)
 }
 
+/// Тека налаштувань за конвенцією кожної ОС.
+fn app_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("Prystan")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        files::home_dir()
+            .join("Library")
+            .join("Application Support")
+            .join("Prystan")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| files::home_dir().join(".config"))
+            .join("prystan")
+    }
+}
+
 fn spawn_ssh_tunnel(p: &Profile, local_port: u16) -> Result<Child, String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = std::process::Command::new("ssh");
     cmd.args([
         "-o", "BatchMode=yes",
@@ -185,7 +205,12 @@ fn spawn_ssh_tunnel(p: &Profile, local_port: u16) -> Result<Child, String> {
         cmd.args(["-i", &p.key_path]);
     }
     cmd.arg(format!("{}@{}", p.user, p.host));
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    // на Windows ховаємо консольне вікно дочірнього ssh
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     cmd.stderr(std::process::Stdio::piped());
     cmd.spawn().map_err(|e| format!("не вдалося запустити ssh: {e}"))
 }
@@ -324,7 +349,14 @@ fn open_url(url: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("не вдалося відкрити браузер: {e}"))?;
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("не вдалося відкрити браузер: {e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::process::Command::new("xdg-open")
             .arg(&url)
@@ -378,12 +410,14 @@ fn spawn_events_stream(
 
 fn main() {
     let started = Instant::now();
-    let appdata = PathBuf::from(std::env::var("APPDATA").unwrap_or_default());
-    let data_dir = appdata.join("Prystan");
+    let data_dir = app_data_dir();
     // одноразова міграція налаштувань зі старої назви — щоб не втратити профілі
-    let legacy = appdata.join("DockerAdmin");
-    if !data_dir.exists() && legacy.exists() {
-        let _ = std::fs::rename(&legacy, &data_dir);
+    #[cfg(windows)]
+    {
+        let legacy = PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("DockerAdmin");
+        if !data_dir.exists() && legacy.exists() {
+            let _ = std::fs::rename(&legacy, &data_dir);
+        }
     }
     let profiles_path = data_dir.join("profiles.json");
 

@@ -90,6 +90,26 @@ fn sh_quote(p: &str) -> String {
     format!("'{}'", p.replace('\'', "'\\''"))
 }
 
+/// Домашня тека користувача — назва змінної відрізняється на Windows і Unix.
+pub fn home_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    let v = std::env::var("USERPROFILE");
+    #[cfg(not(windows))]
+    let v = std::env::var("HOME");
+    std::path::PathBuf::from(v.unwrap_or_default())
+}
+
+/// Куди класти завантажені файли; якщо теки Downloads немає — у домашню.
+pub fn downloads_dir() -> std::path::PathBuf {
+    let home = home_dir();
+    let d = home.join("Downloads");
+    if d.is_dir() {
+        d
+    } else {
+        home
+    }
+}
+
 fn b64() -> base64::engine::GeneralPurpose {
     base64::engine::general_purpose::STANDARD
 }
@@ -255,8 +275,7 @@ pub async fn fs_download(
 ) -> Result<String, String> {
     let docker = state.docker(&conn)?;
     let tar_bytes = fetch_archive(&docker, &id, &path, MAX_FETCH).await?;
-    let downloads = std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join("Downloads");
+    let downloads = downloads_dir();
     let base = path.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or("download");
 
     // якщо в архіві один файл — зберігаємо файл, інакше tar цілком

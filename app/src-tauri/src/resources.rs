@@ -854,10 +854,10 @@ pub async fn build_image(
 /// B9 — імпорт docker contexts із ~/.docker/contexts
 #[tauri::command]
 pub fn import_contexts() -> Result<Vec<serde_json::Value>, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "не знайдено домашню теку")?;
-    let meta = std::path::PathBuf::from(home).join(".docker").join("contexts").join("meta");
+    let meta = crate::files::home_dir()
+        .join(".docker")
+        .join("contexts")
+        .join("meta");
     if !meta.is_dir() {
         return Ok(vec![]);
     }
