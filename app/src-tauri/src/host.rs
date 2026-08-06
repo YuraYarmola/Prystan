@@ -122,7 +122,12 @@ pub struct AgentHandle {
     pub task: tokio::task::JoinHandle<()>,
 }
 
-const AGENT_SCRIPT: &str = "T=/tmp/.dockeradmin_$$; trap 'rm -f $T.c $T.o' EXIT; \
+// Тимчасові файли тримаємо в окремій теці й прибираємо не лише по EXIT:
+// при SIGKILL (аварія застосунку) trap не спрацьовує, тому кожен новий агент
+// підчищає залишки попередніх запусків.
+const AGENT_SCRIPT: &str = "D=/tmp/.prystan; mkdir -p $D; \
+find $D -maxdepth 1 -type f -mmin +60 -delete 2>/dev/null; \
+T=$D/$$; trap 'rm -f $T.c $T.o' EXIT INT TERM HUP; \
 while IFS= read -r l; do i=${l%% *}; b=${l#* }; \
 printf %s \"$b\" | base64 -d > $T.c; sh $T.c > $T.o 2>&1; r=$?; \
 printf '@R %s %s ' \"$i\" \"$r\"; base64 -w0 < $T.o 2>/dev/null || base64 < $T.o | tr -d '\\n'; printf '\\n'; done";
@@ -801,6 +806,69 @@ pub async fn host_fs_rename(
     if code != 0 {
         let msg = String::from_utf8_lossy(&out);
         return Err(msg.lines().last().unwrap_or("mv: помилка").to_string());
+    }
+    Ok(())
+}
+
+/// Створити порожній файл або теку на хості.
+#[tauri::command]
+pub async fn host_fs_create(
+    state: State<'_, AppState>,
+    conn: String,
+    path: String,
+    is_dir: bool,
+) -> Result<(), String> {
+    let p = get_profile(&state, &conn)?;
+    if p.kind == "local" {
+        return if is_dir {
+            std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+        } else if std::path::Path::new(&path).exists() {
+            Err("файл уже існує".into())
+        } else {
+            std::fs::write(&path, b"").map_err(|e| e.to_string())
+        };
+    }
+    let q = sh_quote(&path);
+    let script = if is_dir {
+        format!("mkdir -p -- {q}")
+    } else {
+        format!("if [ -e {q} ]; then echo 'файл уже існує' >&2; exit 1; fi; : > {q}")
+    };
+    let (code, out) = agent_exec(&state, &conn, &script, 30).await?;
+    if code != 0 {
+        let msg = String::from_utf8_lossy(&out);
+        return Err(msg.lines().last().unwrap_or("не вдалося створити").to_string());
+    }
+    Ok(())
+}
+
+/// Копіювання на хості (файл або тека).
+#[tauri::command]
+pub async fn host_fs_copy(
+    state: State<'_, AppState>,
+    conn: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    let p = get_profile(&state, &conn)?;
+    if p.kind == "local" {
+        let src = std::path::Path::new(&from);
+        return if src.is_dir() {
+            Err("копіювання тек доступне лише для SSH-підключень".into())
+        } else {
+            std::fs::copy(&from, &to).map(|_| ()).map_err(|e| e.to_string())
+        };
+    }
+    let (code, out) = agent_exec(
+        &state,
+        &conn,
+        &format!("cp -a -- {} {}", sh_quote(&from), sh_quote(&to)),
+        120,
+    )
+    .await?;
+    if code != 0 {
+        let msg = String::from_utf8_lossy(&out);
+        return Err(msg.lines().last().unwrap_or("помилка cp").to_string());
     }
     Ok(())
 }

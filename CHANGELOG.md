@@ -8,6 +8,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [0.1.0] — 2026-08-06
 
+### Files
+- Right-click context menu in the file manager: open, download, copy, cut, paste,
+  rename, move, permissions, copy path, new file, new folder, delete
+- Copy/cut buffer with paste into another directory; pasting into the same folder
+  creates a `-copy` duplicate instead of failing
+- Keyboard shortcuts: `Ctrl+C` / `Ctrl+X` / `Ctrl+V`, `F2` rename, `Del` delete,
+  `Backspace` to go up
+
 First public release. Everything below was built and tested against a local Docker
 daemon and five real SSH servers.
 

@@ -4,7 +4,10 @@
 function curPath() {
   return S.filesPath[targetKey()] || (isHostView() ? (activeProfile()?.kind === "local" ? "C:/" : "/") : "/");
 }
-function setPath(p) { S.filesPath[targetKey()] = p; }
+function setPath(p) {
+  S.filesPath[targetKey()] = p;
+  S.fsSelected = null;
+}
 
 function fsInvoke(op, extra = {}) {
   if (isHostView()) return invoke("host_" + op, { conn: S.activeConn, ...extra });
@@ -59,13 +62,144 @@ function renderFiles(allEntries) {
       if (f === "mv") renamePath(full, tr.dataset.name);
       if (f === "chmod") chmodPath(full);
     };
+    // правий клік по рядку — меню для конкретного об'єкта
+    tr.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      S.fsSelected = tr.dataset.up ? null : tr.dataset.name;
+      box.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel"));
+      if (!tr.dataset.up) tr.classList.add("sel");
+      const entry = tr.dataset.up ? null : entries.find(x => x.name === tr.dataset.name);
+      showContextMenu(e.clientX, e.clientY, fileMenuItems(entry));
+    };
   });
+
+  // правий клік по порожньому місцю — меню самої теки
+  box.oncontextmenu = e => {
+    if (e.target.closest("tr")) return;
+    e.preventDefault();
+    S.fsSelected = null;
+    box.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel"));
+    showContextMenu(e.clientX, e.clientY, fileMenuItems(null));
+  };
+
+  // підсвічуємо вирізане
+  if (S.fsClip?.op === "cut" && S.fsClip.dir === curPath()) {
+    box.querySelectorAll(`tr[data-name="${CSS.escape(S.fsClip.name)}"]`).forEach(tr => tr.classList.add("cut"));
+  }
 
   function nav(tr) {
     if (tr.dataset.up) { setPath(parentPath(curPath())); openFiles(); return; }
     if (tr.dataset.dir === "true") { setPath(joinPath(curPath(), tr.dataset.name)); openFiles(); }
     else openEditor(joinPath(curPath(), tr.dataset.name));
   }
+}
+
+/* ═══ контекстне меню файлового менеджера ═══
+   entry === null означає клік по порожньому місцю (меню теки) */
+function fileMenuItems(entry) {
+  const dir = curPath();
+  const full = entry ? joinPath(dir, entry.name) : dir;
+  const ro = isReadonly();
+  const hasClip = !!S.fsClip;
+  const items = [];
+
+  if (entry) {
+    items.push({
+      icon: entry.is_dir ? "📂" : "✎",
+      label: entry.is_dir ? t("ctx.open") : t("files.edit"),
+      run: () => entry.is_dir ? (setPath(full), openFiles()) : openEditor(full),
+    });
+    items.push({ icon: "⇩", label: t("files.download"), run: () => downloadPath(full) });
+    items.push("-");
+    items.push({ icon: "⧉", label: t("ctx.copy"), hint: "Ctrl+C", run: () => clipSet(entry, "copy") });
+    items.push({ icon: "✂", label: t("ctx.cut"), hint: "Ctrl+X", disabled: ro, run: () => clipSet(entry, "cut") });
+  }
+
+  items.push({
+    icon: "📋",
+    label: t("ctx.paste"),
+    hint: "Ctrl+V",
+    disabled: !hasClip || ro,
+    run: () => clipPaste(entry?.is_dir ? full : dir),
+  });
+
+  if (entry) {
+    items.push("-");
+    items.push({ icon: "✏", label: t("files.rename"), hint: "F2", disabled: ro, run: () => renamePath(full, entry.name) });
+    items.push({ icon: "⇄", label: t("ctx.moveTo"), disabled: ro, run: () => movePath(full, entry.name) });
+    if (isHostView() && activeProfile()?.kind === "ssh") {
+      items.push({ icon: "🔑", label: t("files.chmod"), disabled: ro, run: () => chmodPath(full) });
+    }
+    items.push({ icon: "🔗", label: t("ctx.copyPath"), run: () => { navigator.clipboard.writeText(full); toast(t("files.copied") + ": " + full, "ok", 2000); } });
+  }
+
+  items.push("-");
+  items.push({ icon: "📄", label: t("ctx.newFile"), disabled: ro, run: () => createEntry(false) });
+  items.push({ icon: "📁", label: t("files.mkdir"), disabled: ro, run: () => createEntry(true) });
+  items.push({ icon: "⟳", label: t("common.refresh"), run: () => openFiles() });
+
+  if (entry) {
+    items.push("-");
+    items.push({ icon: "🗑", label: t("files.delete"), hint: "Del", danger: true, disabled: ro, run: () => deletePath(full) });
+  }
+  return items;
+}
+
+function clipSet(entry, op) {
+  S.fsClip = { dir: curPath(), name: entry.name, op, isDir: entry.is_dir };
+  toast(`${op === "cut" ? t("ctx.cut") : t("ctx.copy")}: ${entry.name}`, "ok", 2000);
+  renderFiles(S.lastEntries);
+}
+
+async function clipPaste(targetDir) {
+  const c = S.fsClip;
+  if (!c || !guardRW("guard.paste")) return;
+  const from = joinPath(c.dir, c.name);
+  let to = joinPath(targetDir, c.name);
+  if (from === to) {
+    // вставляємо в ту саму теку — робимо копію з суфіксом
+    if (c.op === "cut") return;
+    const dot = c.name.lastIndexOf(".");
+    to = joinPath(targetDir, dot > 0
+      ? `${c.name.slice(0, dot)}-copy${c.name.slice(dot)}`
+      : `${c.name}-copy`);
+  }
+  try {
+    if (c.op === "copy") await fsInvoke("fs_copy", { from, to });
+    else { await fsInvoke("fs_rename", { from, to }); S.fsClip = null; }
+    toast(`${c.op === "copy" ? t("ctx.copied") : t("ctx.moved")}: ${to}`, "ok", 3000);
+    openFiles();
+  } catch (e) { toast(`${t("ctx.paste")}: ${e}`); }
+}
+
+/* Перенести в довільний шлях — коли buffer не підходить */
+async function movePath(full, name) {
+  if (!guardRW("guard.rename")) return;
+  const to = await ask({
+    title: t("ctx.moveTo"),
+    text: t("ctx.moveHint"),
+    input: joinPath(curPath(), name),
+    okLabel: t("ctx.moveTo"),
+  });
+  if (!to || to === full) return;
+  try { await fsInvoke("fs_rename", { from: full, to }); openFiles(); }
+  catch (e) { toast("mv: " + e); }
+}
+
+async function createEntry(isDir) {
+  if (!guardRW(isDir ? "guard.mkdir" : "guard.newFile")) return;
+  const name = await ask({
+    title: isDir ? t("files.mkdir") : t("ctx.newFile"),
+    text: (isDir ? t("files.newDirName") : t("ctx.newFileName")) + " " + esc(curPath()),
+    input: isDir ? "" : "new-file.txt",
+    okLabel: t("files.create"),
+  });
+  if (!name) return;
+  try {
+    await fsInvoke("fs_create", { path: joinPath(curPath(), name), isDir });
+    openFiles();
+  } catch (e) { toast(`${t("files.create")}: ${e}`); }
 }
 
 async function downloadPath(full) {
@@ -135,6 +269,26 @@ function wireFilesUI() {
   };
   $("fs-upload-btn").onclick = () => $("fs-upload-input").click();
   $("fs-upload-input").onchange = async e => { await uploadFiles(e.target.files); e.target.value = ""; };
+
+  /* гарячі клавіші у файловому менеджері */
+  $("files-table").addEventListener("keydown", () => {});
+  document.addEventListener("keydown", e => {
+    const onFiles = document.querySelector("#pane-files.active");
+    if (!onFiles) return;
+    if (/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (document.querySelector(".modal-back.open")) return;
+
+    const name = S.fsSelected;
+    const entry = name ? S.lastEntries.find(x => x.name === name) : null;
+    const full = name ? joinPath(curPath(), name) : null;
+
+    if (e.key === "Delete" && full) { e.preventDefault(); deletePath(full); }
+    if (e.key === "F2" && full) { e.preventDefault(); renamePath(full, name); }
+    if (e.ctrlKey && e.code === "KeyC" && entry) { e.preventDefault(); clipSet(entry, "copy"); }
+    if (e.ctrlKey && e.code === "KeyX" && entry) { e.preventDefault(); clipSet(entry, "cut"); }
+    if (e.ctrlKey && e.code === "KeyV" && S.fsClip) { e.preventDefault(); clipPaste(curPath()); }
+    if (e.key === "Backspace" && curPath() !== "/") { e.preventDefault(); setPath(parentPath(curPath())); openFiles(); }
+  });
 
   /* B5 — drag & drop із провідника */
   const pane = $("pane-files");

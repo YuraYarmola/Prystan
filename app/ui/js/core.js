@@ -56,6 +56,7 @@ const S = {
   ctrStats: {},          // cid -> останні CPU/RAM (щоб бейдж не блимав при перемальовці)
   statsFor: null,        // для якого контейнера вже йде стрім статистики
   forwards: [], lastEntries: [], snippets: [],
+  fsClip: null, fsSelected: null,        // буфер copy/cut і вибраний файл
   theme: "dark",
   logBlock: null, logCarry: "", multiBlock: {},   // стан розбору багаторядкових помилок
   cmdHistory: [], termSuggest: true,              // автодоповнення терміналу
@@ -158,6 +159,48 @@ function guardRW(whatKey = "guard.containerAction") {
     return false;
   }
   return true;
+}
+
+/* ── контекстне меню ──
+   items: [{ label, icon, run, danger, disabled, hint }] або "-" як роздільник */
+function showContextMenu(x, y, items) {
+  hideContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctxmenu";
+  for (const it of items) {
+    if (it === "-") {
+      const hr = document.createElement("div");
+      hr.className = "ctxsep";
+      menu.appendChild(hr);
+      continue;
+    }
+    const el = document.createElement("div");
+    el.className = "ctxitem" + (it.danger ? " danger" : "") + (it.disabled ? " disabled" : "");
+    el.innerHTML = `<span class="ci">${it.icon ?? ""}</span><span class="cl">${esc(it.label)}</span>` +
+      (it.hint ? `<span class="ch">${esc(it.hint)}</span>` : "");
+    if (!it.disabled) {
+      el.onclick = e => { e.stopPropagation(); hideContextMenu(); it.run(); };
+    }
+    menu.appendChild(el);
+  }
+  document.body.appendChild(menu);
+
+  // тримаємо меню в межах вікна
+  const r = menu.getBoundingClientRect();
+  const left = Math.min(x, window.innerWidth - r.width - 8);
+  const top = Math.min(y, window.innerHeight - r.height - 8);
+  menu.style.left = Math.max(4, left) + "px";
+  menu.style.top = Math.max(4, top) + "px";
+
+  setTimeout(() => {
+    document.addEventListener("click", hideContextMenu, { once: true });
+    document.addEventListener("contextmenu", hideContextMenu, { once: true });
+    window.addEventListener("resize", hideContextMenu, { once: true });
+  }, 0);
+}
+
+function hideContextMenu() {
+  document.querySelectorAll(".ctxmenu").forEach(m => m.remove());
 }
 
 /* ── дрібні утиліти ── */

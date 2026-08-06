@@ -398,6 +398,58 @@ pub async fn fs_delete(
     }
 }
 
+/// Створити порожній файл або теку в контейнері.
+#[tauri::command]
+pub async fn fs_create(
+    state: State<'_, AppState>,
+    conn: String,
+    id: String,
+    path: String,
+    is_dir: bool,
+) -> Result<(), String> {
+    let docker = state.docker(&conn)?;
+    let q = sh_quote(&path);
+    // -e щоб не перезаписати наявний файл випадково
+    let script = if is_dir {
+        format!("mkdir -p -- {q} 2>&1 && echo __OK__")
+    } else {
+        format!("if [ -e {q} ]; then echo 'already exists'; else : > {q} && echo __OK__; fi")
+    };
+    let out = exec_capture(&docker, &id, vec!["/bin/sh".into(), "-c".into(), script]).await?;
+    if out.contains("__OK__") {
+        Ok(())
+    } else {
+        Err(out.lines().next().unwrap_or("не вдалося створити").to_string())
+    }
+}
+
+/// Копіювання всередині контейнера (файл або тека).
+#[tauri::command]
+pub async fn fs_copy(
+    state: State<'_, AppState>,
+    conn: String,
+    id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    let docker = state.docker(&conn)?;
+    let out = exec_capture(
+        &docker,
+        &id,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("cp -a -- {} {} 2>&1 && echo __OK__", sh_quote(&from), sh_quote(&to)),
+        ],
+    )
+    .await?;
+    if out.contains("__OK__") {
+        Ok(())
+    } else {
+        Err(out.lines().next().unwrap_or("помилка cp").to_string())
+    }
+}
+
 /// B5 — перейменування/переміщення у контейнері
 #[tauri::command]
 pub async fn fs_rename(

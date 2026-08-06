@@ -338,6 +338,27 @@ footer {
 .pal-item .pi-ico { width: 18px; text-align: center; }
 .pal-item .pi-sub { color: var(--dim); font-size: 11px; margin-left: auto; }
 
+/* контекстне меню */
+.ctxmenu {
+  position: fixed; z-index: 200; min-width: 210px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.45); user-select: none;
+}
+.ctxitem {
+  display: flex; align-items: center; gap: 9px; padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; font-size: 12.5px; white-space: nowrap;
+}
+.ctxitem:hover { background: var(--sel); }
+.ctxitem .ci { width: 16px; text-align: center; flex: none; }
+.ctxitem .cl { flex: 1; }
+.ctxitem .ch { color: var(--dim); font-size: 11px; }
+.ctxitem.danger:hover { background: rgba(248,81,73,.16); color: var(--red); }
+.ctxitem.disabled { opacity: .35; cursor: default; }
+.ctxitem.disabled:hover { background: transparent; }
+.ctxsep { height: 1px; background: var(--border); margin: 4px 6px; }
+
+table.grid tr.cut td { opacity: .5; }
+
 #toast-wrap { position: fixed; bottom: 40px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 99; }
 .toast {
   background: var(--panel3); border: 1px solid var(--border); border-left: 3px solid var(--accent);
