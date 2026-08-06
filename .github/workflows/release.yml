@@ -17,6 +17,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Лише офіційні actions: rust ставиться через передвстановлений rustup,
+# реліз створюється передвстановленим gh CLI. Менше сторонніх залежностей —
+# менше причин впасти, коли marketplace недоступний.
+
 jobs:
   build:
     name: ${{ matrix.label }}
@@ -34,36 +38,42 @@ jobs:
             target: x86_64-pc-windows-msvc
             bin: prystan.exe
             archive: zip
+            test: true
 
           - label: Windows x86 (32-bit)
             os: windows-latest
             target: i686-pc-windows-msvc
             bin: prystan.exe
             archive: zip
+            test: false
 
           - label: Windows ARM64
             os: windows-latest
             target: aarch64-pc-windows-msvc
             bin: prystan.exe
             archive: zip
+            test: false
 
           - label: macOS Apple Silicon
             os: macos-latest
             target: aarch64-apple-darwin
             bin: prystan
             archive: tar
+            test: true
 
           - label: macOS Intel
             os: macos-latest
             target: x86_64-apple-darwin
             bin: prystan
             archive: tar
+            test: false
 
           - label: Linux x64 (Ubuntu)
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bin: prystan
             archive: tar
+            test: true
 
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +93,13 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             patchelf file
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+          rustc --version && cargo --version
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -98,9 +111,9 @@ jobs:
           key: ${{ matrix.target }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: ${{ matrix.target }}-cargo-
 
-      # Тести ганяємо лише на нативних цілях — крос-збірки не запустити на раннері
+      # Тести лише на нативних цілях — крос-збірку раннер не запустить
       - name: Unit tests
-        if: matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.test
         run: cargo test --target ${{ matrix.target }}
 
       - name: Build
@@ -110,32 +123,36 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $name = "prystan-${{ github.ref_name }}-${{ matrix.target }}"
+          $ver = "${{ github.ref_name }}"
+          $name = "prystan-$ver-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "../../dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           Copy-Item "../../README.md","../../LICENSE","../../CHANGELOG.md" "../../dist/$name/"
           Compress-Archive -Path "../../dist/$name/*" -DestinationPath "../../dist/$name.zip"
+          Remove-Item -Recurse -Force "../../dist/$name"
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar'
         run: |
-          name="prystan-${{ github.ref_name }}-${{ matrix.target }}"
+          ver="${{ github.ref_name }}"
+          name="prystan-$ver-${{ matrix.target }}"
           mkdir -p "../../dist/$name"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           chmod +x "../../dist/$name/${{ matrix.bin }}"
           cp ../../README.md ../../LICENSE ../../CHANGELOG.md "../../dist/$name/"
           tar -czf "../../dist/$name.tar.gz" -C "../../dist" "$name"
+          rm -rf "../../dist/$name"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: prystan-${{ matrix.target }}
-          path: dist/*.*
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
 
   release:
-    name: Publish release
+    name: Publish draft release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -151,28 +168,33 @@ jobs:
       - name: List what will be published
         run: ls -lah dist/
 
+      - name: Compose release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          Портативні збірки — розпакуйте й запускайте, інсталятор не потрібен.
+
+          | Платформа | Файл |
+          |---|---|
+          | Windows x64 | `*-x86_64-pc-windows-msvc.zip` |
+          | Windows 32-bit | `*-i686-pc-windows-msvc.zip` |
+          | Windows ARM64 | `*-aarch64-pc-windows-msvc.zip` |
+          | macOS Apple Silicon | `*-aarch64-apple-darwin.tar.gz` |
+          | macOS Intel | `*-x86_64-apple-darwin.tar.gz` |
+          | Linux x64 | `*-x86_64-unknown-linux-gnu.tar.gz` |
+
+          **Windows:** потрібен [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — є в Windows 11 і в оновленій Windows 10.
+          **macOS:** збірки не підписані. При першому запуску `Ctrl`+клік → «Відкрити», або `xattr -dr com.apple.quarantine prystan`.
+          **Linux:** потрібні `libwebkit2gtk-4.1-0` і `libgtk-3-0`.
+
+          Повний список змін — у [CHANGELOG.md](CHANGELOG.md).
+          NOTES
+
+      # gh CLI передвстановлений на раннерах — сторонній action не потрібен
       - name: Create draft release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true          # чернетка — опублікуєте вручну після перевірки
-          generate_release_notes: true
-          files: dist/*
-          body: |
-            ## Prystan ${{ github.ref_name }}
-
-            Портативні збірки — розпакуйте й запускайте, інсталятор не потрібен.
-
-            | Платформа | Файл |
-            |---|---|
-            | Windows x64 | `*-x86_64-pc-windows-msvc.zip` |
-            | Windows 32-bit | `*-i686-pc-windows-msvc.zip` |
-            | Windows ARM64 | `*-aarch64-pc-windows-msvc.zip` |
-            | macOS Apple Silicon | `*-aarch64-apple-darwin.tar.gz` |
-            | macOS Intel | `*-x86_64-apple-darwin.tar.gz` |
-            | Linux x64 | `*-x86_64-unknown-linux-gnu.tar.gz` |
-
-            **Windows:** потрібен [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (є в Windows 11 і в оновленій Windows 10).
-            **macOS:** збірки не підписані — при першому запуску `Ctrl`+клік → «Відкрити», або `xattr -dr com.apple.quarantine prystan`.
-            **Linux:** потрібні `libwebkit2gtk-4.1-0` і `libgtk-3-0`.
-
-            Повний список змін — у [CHANGELOG.md](CHANGELOG.md).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --draft \
+            --title "Prystan ${{ github.ref_name }}" \
+            --notes-file notes.md

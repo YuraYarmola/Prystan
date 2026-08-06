@@ -13,8 +13,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Свідомо використовуємо лише офіційні actions (checkout / cache / artifact).
+# Rust ставимо через rustup, який уже є на всіх раннерах: одна зовнішня
+# залежність менше, і збірка не падає, коли marketplace недоступний.
+
 jobs:
-  # Основна перевірка: повна збірка + тести на Windows (головна платформа)
   windows:
     name: Build and test (Windows)
     runs-on: windows-latest
@@ -25,10 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add clippy rustfmt
+          rustc --version && cargo --version
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -95,8 +101,11 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             patchelf file
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustc --version && cargo --version
 
       - name: Cache cargo
         uses: actions/cache@v4
