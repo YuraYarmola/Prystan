@@ -18,72 +18,25 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
-# Лише офіційні actions: rust ставиться передвстановленим rustup,
-# реліз створюється передвстановленим gh CLI.
+# Умова запуску обчислюється керуючим шаром GitHub, без окремої джоби-воротаря:
+# зайва джоба означала б ще один раннер, який може не отримати виконавця
+# і завалити всю матрицю (саме так і сталося під час аутейджу Actions).
 
 jobs:
-  # Вирішує, чи взагалі щось збирати, і під якою версією
-  decide:
-    name: Decide
-    runs-on: ubuntu-latest
-    outputs:
-      build: ${{ steps.d.outputs.build }}
-      publish: ${{ steps.d.outputs.publish }}
-      version: ${{ steps.d.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: d
-        shell: bash
-        run: |
-          # версія з Cargo.toml — єдине джерело правди
-          cargo_ver=$(grep -m1 '^version' app/src-tauri/Cargo.toml | cut -d'"' -f2)
-
-          build=false
-          publish=false
-          version="v$cargo_ver"
-
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            build=true; publish=true; version="${{ github.ref_name }}"
-            echo "Теґ ${version} — збираємо й публікуємо"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            build=true; publish="${{ inputs.publish }}"
-            echo "Ручний запуск, публікація: $publish"
-          else
-            msg=$(git log -1 --pretty=%B)
-            if grep -qiE '\[(release|build)\]' <<< "$msg"; then
-              build=true; publish=true
-              echo "Маркер [release] у коміті — збираємо версію ${version} з Cargo.toml"
-            else
-              echo "Звичайний коміт без маркера — релізна збірка пропускається"
-              echo "(додайте [release] у повідомлення коміту, щоб зібрати)"
-            fi
-          fi
-
-          {
-            echo "build=$build"
-            echo "publish=$publish"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
-
-      # Не даємо мовчки перезаписати вже випущену версію
-      - name: Check version is not released yet
-        if: steps.d.outputs.publish == 'true' && github.ref_type != 'tag'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "${{ steps.d.outputs.version }}" >/dev/null 2>&1; then
-            echo "::error::Реліз ${{ steps.d.outputs.version }} вже існує. Підніміть version у app/src-tauri/Cargo.toml."
-            exit 1
-          fi
-
   build:
     name: ${{ matrix.label }}
-    needs: decide
-    if: needs.decide.outputs.build == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[build]')
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -138,6 +91,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Версія: з теґа, якщо він є, інакше з Cargo.toml
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            v="${{ github.ref_name }}"
+          else
+            v="v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "Версія збірки: $v"
+
       # Tauri на Linux будується поверх WebKitGTK — без цих пакетів не злінкується
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -183,7 +149,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $name = "prystan-${{ needs.decide.outputs.version }}-${{ matrix.target }}"
+          $name = "prystan-${{ steps.ver.outputs.value }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "../../dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           Copy-Item "../../README.md","../../LICENSE","../../CHANGELOG.md" "../../dist/$name/"
@@ -193,7 +159,7 @@ jobs:
       - name: Package (tar.gz)
         if: matrix.archive == 'tar'
         run: |
-          name="prystan-${{ needs.decide.outputs.version }}-${{ matrix.target }}"
+          name="prystan-${{ steps.ver.outputs.value }}-${{ matrix.target }}"
           mkdir -p "../../dist/$name"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           chmod +x "../../dist/$name/${{ matrix.bin }}"
@@ -211,11 +177,35 @@ jobs:
 
   release:
     name: Publish draft release
-    needs: [decide, build]
-    if: needs.decide.outputs.publish == 'true'
+    needs: build
+    # На ручному запуску реліз створюємо лише якщо явно попросили
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            v="${{ github.ref_name }}"
+          else
+            v="v$(grep -m1 '^version' app/src-tauri/Cargo.toml | cut -d'"' -f2)"
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+
+      # Не даємо мовчки перезаписати вже випущену версію
+      - name: Check version is not released yet
+        if: github.ref_type != 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.ver.outputs.value }}" >/dev/null 2>&1; then
+            echo "::error::Реліз ${{ steps.ver.outputs.value }} вже існує. Підніміть version у app/src-tauri/Cargo.toml."
+            exit 1
+          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -242,8 +232,8 @@ jobs:
           | Mac на Intel (до 2020) | `…-x86_64-apple-darwin.tar.gz` |
           | Linux, 64-біт | `…-x86_64-unknown-linux-gnu.tar.gz` |
 
-          Не знаєте, який у вас Mac? Меню  → «Про цей Mac»: якщо чип називається
-          M1/M2/M3/M4 — беріть Apple Silicon, якщо Intel — Intel.
+          Не знаєте, який у вас Mac? Меню  → «Про цей Mac»: чип M1/M2/M3/M4 —
+          беріть Apple Silicon, напис Intel — відповідно Intel.
 
           ### Після завантаження
 
@@ -259,10 +249,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ needs.decide.outputs.version }}" dist/* \
+          gh release create "${{ steps.ver.outputs.value }}" dist/* \
             --draft \
             --target "${{ github.sha }}" \
-            --title "Prystan ${{ needs.decide.outputs.version }}" \
+            --title "Prystan ${{ steps.ver.outputs.value }}" \
             --notes-file notes.md
-          echo "Чернетку створено: ${{ needs.decide.outputs.version }}"
-          echo "Перевірте й опублікуйте на вкладці Releases."
+          echo "Чернетку створено. Перевірте й опублікуйте на вкладці Releases."
