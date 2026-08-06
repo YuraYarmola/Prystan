@@ -1,15 +1,19 @@
 name: Release
 
-# Збірка під усі платформи. Запускається на теґ vX.Y.Z або вручну.
+# Збірка під усі платформи запускається трьома способами:
+#   1. коміт у main зі словом [release] у повідомленні — версія береться з Cargo.toml
+#   2. пуш теґа vX.Y.Z
+#   3. вручну з вкладки Actions
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Тільки зібрати, реліз не створювати"
+      publish:
+        description: "Створити чернетку релізу (інакше лише зібрати артефакти)"
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -17,13 +21,69 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# Лише офіційні actions: rust ставиться через передвстановлений rustup,
-# реліз створюється передвстановленим gh CLI. Менше сторонніх залежностей —
-# менше причин впасти, коли marketplace недоступний.
+# Лише офіційні actions: rust ставиться передвстановленим rustup,
+# реліз створюється передвстановленим gh CLI.
 
 jobs:
+  # Вирішує, чи взагалі щось збирати, і під якою версією
+  decide:
+    name: Decide
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.d.outputs.build }}
+      publish: ${{ steps.d.outputs.publish }}
+      version: ${{ steps.d.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: d
+        shell: bash
+        run: |
+          # версія з Cargo.toml — єдине джерело правди
+          cargo_ver=$(grep -m1 '^version' app/src-tauri/Cargo.toml | cut -d'"' -f2)
+
+          build=false
+          publish=false
+          version="v$cargo_ver"
+
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            build=true; publish=true; version="${{ github.ref_name }}"
+            echo "Теґ ${version} — збираємо й публікуємо"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            build=true; publish="${{ inputs.publish }}"
+            echo "Ручний запуск, публікація: $publish"
+          else
+            msg=$(git log -1 --pretty=%B)
+            if grep -qiE '\[(release|build)\]' <<< "$msg"; then
+              build=true; publish=true
+              echo "Маркер [release] у коміті — збираємо версію ${version} з Cargo.toml"
+            else
+              echo "Звичайний коміт без маркера — релізна збірка пропускається"
+              echo "(додайте [release] у повідомлення коміту, щоб зібрати)"
+            fi
+          fi
+
+          {
+            echo "build=$build"
+            echo "publish=$publish"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      # Не даємо мовчки перезаписати вже випущену версію
+      - name: Check version is not released yet
+        if: steps.d.outputs.publish == 'true' && github.ref_type != 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.d.outputs.version }}" >/dev/null 2>&1; then
+            echo "::error::Реліз ${{ steps.d.outputs.version }} вже існує. Підніміть version у app/src-tauri/Cargo.toml."
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.label }}
+    needs: decide
+    if: needs.decide.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -123,8 +183,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $ver = "${{ github.ref_name }}"
-          $name = "prystan-$ver-${{ matrix.target }}"
+          $name = "prystan-${{ needs.decide.outputs.version }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "../../dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           Copy-Item "../../README.md","../../LICENSE","../../CHANGELOG.md" "../../dist/$name/"
@@ -134,8 +193,7 @@ jobs:
       - name: Package (tar.gz)
         if: matrix.archive == 'tar'
         run: |
-          ver="${{ github.ref_name }}"
-          name="prystan-$ver-${{ matrix.target }}"
+          name="prystan-${{ needs.decide.outputs.version }}-${{ matrix.target }}"
           mkdir -p "../../dist/$name"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "../../dist/$name/"
           chmod +x "../../dist/$name/${{ matrix.bin }}"
@@ -153,9 +211,9 @@ jobs:
 
   release:
     name: Publish draft release
-    needs: build
+    needs: [decide, build]
+    if: needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
 
@@ -173,14 +231,21 @@ jobs:
           cat > notes.md <<'NOTES'
           Портативні збірки — розпакуйте й запускайте, інсталятор не потрібен.
 
-          | Платформа | Файл |
+          ### Який файл завантажити
+
+          | Ваша система | Файл |
           |---|---|
-          | Windows x64 | `*-x86_64-pc-windows-msvc.zip` |
-          | Windows 32-bit | `*-i686-pc-windows-msvc.zip` |
-          | Windows ARM64 | `*-aarch64-pc-windows-msvc.zip` |
-          | macOS Apple Silicon | `*-aarch64-apple-darwin.tar.gz` |
-          | macOS Intel | `*-x86_64-apple-darwin.tar.gz` |
-          | Linux x64 | `*-x86_64-unknown-linux-gnu.tar.gz` |
+          | Windows 10/11, 64-біт (майже всі ПК) | `…-x86_64-pc-windows-msvc.zip` |
+          | Windows на ARM (Surface Pro X, Dev Kit) | `…-aarch64-pc-windows-msvc.zip` |
+          | Windows 32-біт (старі машини) | `…-i686-pc-windows-msvc.zip` |
+          | Mac на Apple Silicon (M1–M4) | `…-aarch64-apple-darwin.tar.gz` |
+          | Mac на Intel (до 2020) | `…-x86_64-apple-darwin.tar.gz` |
+          | Linux, 64-біт | `…-x86_64-unknown-linux-gnu.tar.gz` |
+
+          Не знаєте, який у вас Mac? Меню  → «Про цей Mac»: якщо чип називається
+          M1/M2/M3/M4 — беріть Apple Silicon, якщо Intel — Intel.
+
+          ### Після завантаження
 
           **Windows:** потрібен [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — є в Windows 11 і в оновленій Windows 10.
           **macOS:** збірки не підписані. При першому запуску `Ctrl`+клік → «Відкрити», або `xattr -dr com.apple.quarantine prystan`.
@@ -189,12 +254,15 @@ jobs:
           Повний список змін — у [CHANGELOG.md](CHANGELOG.md).
           NOTES
 
-      # gh CLI передвстановлений на раннерах — сторонній action не потрібен
+      # gh CLI передвстановлений на раннерах; теґ створюється разом із релізом
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
+          gh release create "${{ needs.decide.outputs.version }}" dist/* \
             --draft \
-            --title "Prystan ${{ github.ref_name }}" \
+            --target "${{ github.sha }}" \
+            --title "Prystan ${{ needs.decide.outputs.version }}" \
             --notes-file notes.md
+          echo "Чернетку створено: ${{ needs.decide.outputs.version }}"
+          echo "Перевірте й опублікуйте на вкладці Releases."

@@ -118,6 +118,31 @@ what you tested it against (local socket, SSH host, Docker version).
 
 **Never test destructive operations against someone else's production server.**
 
+## Releasing (maintainer)
+
+Regular pushes to `main` only run CI. The six-platform release build is triggered
+deliberately, in one of three ways:
+
+1. **Commit marker** — put `[release]` anywhere in the commit message on `main`.
+   The version comes from `version` in `app/src-tauri/Cargo.toml`, the tag is created
+   automatically, and a **draft** release is prepared.
+
+   ```
+   git commit -m "Add volume backup [release]"
+   ```
+
+   Bump the version in `Cargo.toml` first — the workflow refuses to overwrite a version
+   that already has a release.
+
+2. **Tag** — `git tag v0.2.0 && git push origin v0.2.0`. The tag name becomes the
+   release name.
+
+3. **Manually** — *Actions → Release → Run workflow*. Leave *publish* off to only build
+   artifacts and check that all six targets compile, without creating a release.
+
+The release is always created as a **draft**: review the assets and notes, then publish
+it by hand.
+
 ## Reporting bugs
 
 Open an issue using the bug template and include:

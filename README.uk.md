@@ -59,13 +59,37 @@ chmod і drag-and-drop — і всередині контейнерів, і на
 дій, сповіщення в Telegram, світла й темна теми, інтерфейс українською, російською
 та англійською.
 
-## Встановлення
+## Завантаження
 
-Завантажте `Prystan.exe` з [Releases](../../releases) — це один портативний файл без
-інсталятора. Для Windows 10/11 потрібен
-[WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) (зазвичай уже є).
+Збірки лежать на сторінці **[Releases](../../releases)** — відкрийте останній реліз
+і розгорніть **Assets** унизу. Усі архіви портативні: розпакували й запустили,
+інсталятор і жодні рантайми не потрібні.
 
-### Збірка з коду
+| Ваша система | Який файл качати |
+|---|---|
+| **Windows 10/11, 64-біт** — майже всі ПК | `prystan-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+| Windows на ARM — Surface Pro X, Dev Kit | `prystan-vX.Y.Z-aarch64-pc-windows-msvc.zip` |
+| Windows 32-біт — старі машини | `prystan-vX.Y.Z-i686-pc-windows-msvc.zip` |
+| **Mac на Apple Silicon** — M1…M4 | `prystan-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+| Mac на Intel — до 2020 року | `prystan-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+| **Linux, 64-біт** | `prystan-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+
+Не знаєте, який у вас Mac?  → «Про цей Mac»: чип M1/M2/M3/M4 — беріть Apple Silicon,
+напис Intel — відповідно Intel.
+
+**Після завантаження**
+
+- **Windows** потребує [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) —
+  є в Windows 11 і в оновленій Windows 10.
+- **macOS**: збірки не підписані. При першому запуску `Ctrl`+клік → «Відкрити»,
+  або `xattr -dr com.apple.quarantine prystan`.
+- **Linux**: потрібні `libwebkit2gtk-4.1-0` і `libgtk-3-0`.
+
+> Потрібна збірка найсвіжішого коміту, а не релізу? Відкрийте
+> [Actions](../../actions), виберіть зелений запуск і завантажте артефакт під свою
+> платформу. Вони зберігаються 14 днів.
+
+## Збірка з коду
 
 Потрібні [Rust](https://rustup.rs/) (stable, MSVC) і Visual Studio Build Tools з
 C++ workload. **Node.js не потрібен** — фронтенд це звичайний HTML/JS.
@@ -78,10 +102,9 @@ cargo build --release
 
 ## Документація
 
-- [Аналіз ринку й вимоги](REPORT.md)
-- [План фіч](ROADMAP.md)
-- [Прогалини щодо конкурентів](GAPS.md)
 - [Як контриб'ютити](CONTRIBUTING.md)
+- [Політика безпеки](SECURITY.md)
+- [Список змін](CHANGELOG.md)
 
 ## Ліцензія
 

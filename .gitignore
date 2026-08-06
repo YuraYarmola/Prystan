@@ -32,3 +32,8 @@ Desktop.ini
 err*.txt
 out*.txt
 /scratch/
+
+# Внутрішні робочі документи — лишаються локально, у репозиторій не йдуть
+/GAPS.md
+/ROADMAP.md
+/REPORT.md

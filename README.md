@@ -81,15 +81,37 @@ action journal, Telegram alerts, light/dark themes, and Ukrainian / Russian / En
 
 </div>
 
-## Install
+## Download
 
-### Download
+Builds live on the **[Releases](../../releases)** page — open the latest release and
+expand **Assets** at the bottom. Every archive is portable: unpack it and run the
+binary, no installer and no runtime to set up.
 
-Grab the latest `Prystan.exe` from [Releases](../../releases). No installer, no runtime —
-a single portable binary. Windows 10/11 needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)
-(already present on most systems).
+| Your system | File to download |
+|---|---|
+| **Windows 10/11, 64-bit** — almost every PC | `prystan-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
+| Windows on ARM — Surface Pro X, Dev Kit | `prystan-vX.Y.Z-aarch64-pc-windows-msvc.zip` |
+| Windows 32-bit — older machines | `prystan-vX.Y.Z-i686-pc-windows-msvc.zip` |
+| **Mac with Apple Silicon** — M1 through M4 | `prystan-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+| Mac with Intel — before 2020 | `prystan-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+| **Linux, 64-bit** | `prystan-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
 
-### Build from source
+Not sure which Mac you have?  → *About This Mac*: a chip called M1/M2/M3/M4 means
+Apple Silicon, anything saying Intel means the Intel build.
+
+**After downloading**
+
+- **Windows** needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) —
+  bundled with Windows 11 and with up-to-date Windows 10.
+- **macOS** builds are not signed. On first launch use `Ctrl`+click → *Open*, or run
+  `xattr -dr com.apple.quarantine prystan`.
+- **Linux** needs `libwebkit2gtk-4.1-0` and `libgtk-3-0`.
+
+> Want a build of the very latest commit rather than a release? Open
+> [Actions](../../actions), pick a green run and download the artifact for your
+> platform. Those expire after 14 days.
+
+## Build it yourself
 
 Prerequisites:
 
@@ -138,11 +160,9 @@ persistent agent process for file operations, and ConPTY for interactive termina
 
 ## Documentation
 
-- [Market analysis and requirements](REPORT.md)
-- [Feature roadmap](ROADMAP.md)
-- [Competitive gaps](GAPS.md)
 - [Contributing guide](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## Contributing
 
