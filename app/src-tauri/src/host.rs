@@ -677,6 +677,26 @@ root 99 0.0 0.0 100 100 ? R 10:00 0:00 ps aux --sort=-%cpu\n";
     fn partial_block_is_rejected() {
         assert!(parse_monitor_block("==B==\ncpu 1 2 3\n").is_none());
     }
+
+    #[test]
+    fn parses_du_output() {
+        let out = "4\t/opt/empty\n\
+120500\t/opt/app cache\n\
+2048\t/opt/logs\n\
+122552\t/opt\n";
+        let rows = parse_du(out);
+        assert_eq!(rows.len(), 4);
+        // кілобайти множаться на 1024
+        assert_eq!(rows[0], ("/opt/empty".into(), 4096));
+        // пробіл у назві теки не має рвати рядок
+        assert_eq!(rows[1], ("/opt/app cache".into(), 120_500 * 1024));
+        assert_eq!(rows[3].0, "/opt");
+    }
+
+    #[test]
+    fn du_ignores_noise_lines() {
+        assert!(parse_du("du: cannot read directory\n\n").is_empty());
+    }
 }
 
 /* ── постійний монітор (одна ssh-сесія, стрім метрик) ── */
@@ -684,25 +704,46 @@ root 99 0.0 0.0 100 100 ? R 10:00 0:00 ps aux --sort=-%cpu\n";
 pub struct MonitorHandle {
     pub task: tokio::task::JoinHandle<()>,
     pub child: tokio::process::Child,
+    /// період семплювання — щоб не перезапускати сесію без потреби
+    pub interval: u32,
 }
 
 // $Z порожня — маркери в cmdline скрипта виглядають як ==B$Z== і не збігаються
 // з ==B== у виводі, інакше ps-рядок самого монітора рвав би парсинг блоків
-const MONITOR_SCRIPT: &str = "Z=; while true; do \
+fn monitor_script(interval: u32) -> String {
+    format!(
+        "Z=; while true; do \
   echo ==B$Z==; head -1 /proc/stat; grep -E 'MemTotal|MemAvailable' /proc/meminfo; \
   cat /proc/loadavg; cat /proc/uptime; nproc; hostname; \
   echo ==D$Z==; df -B1 -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null | tail -n +2; \
   echo ==P$Z==; ps aux --sort=-%cpu 2>/dev/null | head -70; \
-  echo ==E$Z==; sleep 3; done";
+  echo ==E$Z==; sleep {interval}; done"
+    )
+}
 
+/// Запустити монітор. `interval` — секунди між замірами: 3 для відкритого
+/// сервера, більше для фонових, які потрібні лише заради порогових алертів.
 #[tauri::command]
 pub async fn host_monitor_start(
     app: AppHandle,
     state: State<'_, AppState>,
     conn: String,
+    interval: Option<u32>,
 ) -> Result<(), String> {
-    if state.monitors.lock().unwrap().contains_key(&conn) {
-        return Ok(()); // вже працює
+    let interval = interval.unwrap_or(3).clamp(2, 120);
+    {
+        let mut mons = state.monitors.lock().unwrap();
+        match mons.get(&conn) {
+            // вже працює з потрібним періодом — нічого не робимо
+            Some(m) if m.interval == interval => return Ok(()),
+            Some(_) => {
+                if let Some(mut old) = mons.remove(&conn) {
+                    old.task.abort();
+                    let _ = old.child.start_kill();
+                }
+            }
+            None => {}
+        }
     }
     let p = get_profile(&state, &conn)?;
     if !is_ssh(&p) {
@@ -710,7 +751,7 @@ pub async fn host_monitor_start(
     }
 
     let mut cmd = ssh_command(&p);
-    cmd.arg(MONITOR_SCRIPT);
+    cmd.arg(monitor_script(interval));
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("ssh: {e}"))?;
     crate::procguard::guard(child.id().unwrap_or(0));
@@ -771,7 +812,7 @@ pub async fn host_monitor_start(
         .monitors
         .lock()
         .unwrap()
-        .insert(conn, MonitorHandle { task, child });
+        .insert(conn, MonitorHandle { task, child, interval });
     Ok(())
 }
 
@@ -895,6 +936,254 @@ pub async fn host_fs_chmod(
     Ok(())
 }
 
+/* ── аналіз використання диска по теках ─────────────── */
+
+#[derive(Serialize)]
+pub struct DuEntry {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub is_dir: bool,
+}
+
+/// Розібрати вивід `du -k -d1` у пари (шлях, байти).
+fn parse_du(text: &str) -> Vec<(String, u64)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let kb: u64 = it.next()?.parse().ok()?;
+            let path = it.collect::<Vec<_>>().join(" ");
+            if path.is_empty() {
+                return None;
+            }
+            Some((path, kb * 1024))
+        })
+        .collect()
+}
+
+/// Розмір теки й найбільші її елементи. Один рівень углиб — далі користувач
+/// провалюється сам, інакше на великих деревах це тривало б хвилини.
+#[tauri::command]
+pub async fn host_du(
+    state: State<'_, AppState>,
+    conn: String,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let p = get_profile(&state, &conn)?;
+    if p.kind == "local" {
+        return local_du(&path);
+    }
+    let q = sh_quote(&path);
+    // du -d1 є в GNU і busybox; --max-depth=1 лишаємо як запасний варіант
+    let script = format!(
+        "du -xk -d 1 -- {q} 2>/dev/null || du -xk --max-depth=1 -- {q} 2>/dev/null; \
+         echo '==F=='; LC_ALL=C ls -lA -- {q} 2>/dev/null"
+    );
+    let (_, out) = agent_exec(&state, &conn, &script, 600).await?;
+    let text = String::from_utf8_lossy(&out).to_string();
+    let (du_part, ls_part) = text.split_once("==F==").unwrap_or((text.as_str(), ""));
+
+    let base = path.trim_end_matches('/');
+    let mut total = 0u64;
+    let mut entries: Vec<DuEntry> = Vec::new();
+    for (p, size) in parse_du(du_part) {
+        let trimmed = p.trim_end_matches('/');
+        if trimmed == base || p == path {
+            total = size;
+            continue;
+        }
+        let name = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
+        entries.push(DuEntry { name, path: p, size, is_dir: true });
+    }
+    for e in parse_ls(ls_part) {
+        if e.is_dir {
+            continue;
+        }
+        entries.push(DuEntry {
+            path: format!("{base}/{}", e.name),
+            name: e.name,
+            size: e.size,
+            is_dir: false,
+        });
+    }
+    if entries.is_empty() && total == 0 {
+        return Err(format!("не вдалося порахувати розмір: {path}"));
+    }
+    entries.sort_by(|a, b| b.size.cmp(&a.size));
+    Ok(serde_json::json!({ "path": path, "total": total, "entries": entries }))
+}
+
+/// Рекурсивний розмір теки без рекурсії у стеку (обмежений лічильником файлів).
+fn dir_size(root: &std::path::Path, budget: &mut u64) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if *budget == 0 {
+            break;
+        }
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for e in rd.flatten() {
+            if *budget == 0 {
+                break;
+            }
+            *budget -= 1;
+            match e.metadata() {
+                Ok(md) if md.is_dir() => stack.push(e.path()),
+                Ok(md) if md.is_file() => total += md.len(),
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
+fn local_du(path: &str) -> Result<serde_json::Value, String> {
+    let root = std::path::Path::new(path);
+    let mut entries: Vec<DuEntry> = Vec::new();
+    // спільний бюджет обходу — щоб «C:\» не рахувався годину
+    let mut budget: u64 = 2_000_000;
+    for e in std::fs::read_dir(root).map_err(|e| e.to_string())? {
+        let e = match e {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let md = match e.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let size = if md.is_dir() {
+            dir_size(&e.path(), &mut budget)
+        } else {
+            md.len()
+        };
+        entries.push(DuEntry {
+            name: e.file_name().to_string_lossy().to_string(),
+            path: e.path().to_string_lossy().replace('\\', "/"),
+            size,
+            is_dir: md.is_dir(),
+        });
+    }
+    entries.sort_by(|a, b| b.size.cmp(&a.size));
+    let total: u64 = entries.iter().map(|e| e.size).sum();
+    Ok(serde_json::json!({
+        "path": path,
+        "total": total,
+        "entries": entries,
+        "partial": budget == 0,
+    }))
+}
+
+/* ── рекурсивний пошук файлів ────────────────────────
+   Фільтр у файловому менеджері працює лише в межах відкритої теки, тож
+   «де лежить цей конфіг» доводилось шукати в консолі. `-printf` є лише в GNU
+   find, тому типи розділяємо двома проходами — так працює і на busybox. */
+
+#[derive(Serialize)]
+pub struct FoundItem {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[tauri::command]
+pub async fn host_fs_find(
+    state: State<'_, AppState>,
+    conn: String,
+    path: String,
+    query: String,
+    mode: String,
+    limit: Option<usize>,
+) -> Result<Vec<FoundItem>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let limit = limit.unwrap_or(300).min(2000);
+    let p = get_profile(&state, &conn)?;
+    if p.kind == "local" {
+        return local_find(&path, q, &mode, limit);
+    }
+
+    let dir = sh_quote(&path);
+    let script = if mode == "content" {
+        // -I пропускає бінарники, -l достатньо самих імен
+        format!(
+            "grep -rIl -- {} {} 2>/dev/null | head -n {limit}; echo '==F=='",
+            sh_quote(q),
+            dir
+        )
+    } else {
+        let pat = sh_quote(&format!("*{q}*"));
+        format!(
+            "find {dir} -maxdepth 8 -iname {pat} -type d 2>/dev/null | head -n {limit}; \
+             echo '==F=='; \
+             find {dir} -maxdepth 8 -iname {pat} -type f 2>/dev/null | head -n {limit}"
+        )
+    };
+    let (_, out) = agent_exec(&state, &conn, &script, 180).await?;
+    let text = String::from_utf8_lossy(&out).to_string();
+    let (dirs, files) = text.split_once("==F==").unwrap_or((text.as_str(), ""));
+
+    let mut items: Vec<FoundItem> = dirs
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| FoundItem { path: l.trim().to_string(), is_dir: true })
+        .collect();
+    items.extend(
+        files
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| FoundItem { path: l.trim().to_string(), is_dir: false }),
+    );
+    items.truncate(limit);
+    Ok(items)
+}
+
+fn local_find(root: &str, q: &str, mode: &str, limit: usize) -> Result<Vec<FoundItem>, String> {
+    let needle = q.to_lowercase();
+    let mut found = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(root)];
+    let mut budget = 200_000u32; // щоб «C:/» не шукався годину
+    while let Some(dir) = stack.pop() {
+        if found.len() >= limit || budget == 0 {
+            break;
+        }
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for e in rd.flatten() {
+            if found.len() >= limit || budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                stack.push(e.path());
+            }
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            let hit = if mode == "content" && !is_dir {
+                std::fs::read(e.path())
+                    .ok()
+                    .filter(|b| b.len() < 4 << 20 && !b.iter().take(4000).any(|&c| c == 0))
+                    .map(|b| String::from_utf8_lossy(&b).to_lowercase().contains(&needle))
+                    .unwrap_or(false)
+            } else {
+                name.contains(&needle)
+            };
+            if hit {
+                found.push(FoundItem {
+                    path: e.path().to_string_lossy().replace('\\', "/"),
+                    is_dir,
+                });
+            }
+        }
+    }
+    Ok(found)
+}
+
 /* ── термінал хоста через ConPTY (C7: справжній ресайз) ─
    Локальний ConPTY дає ssh справжній термінал, тому SIGWINCH
    доходить до віддаленого shell, а пароль/passphrase можна
@@ -983,6 +1272,103 @@ pub async fn host_term_open(
     Ok(sid)
 }
 
+/// Термінал на машині користувача, відкритий у теці проєкту.
+/// Потрібен, щоб перезібрати проєкт не виходячи із застосунку.
+#[tauri::command]
+pub async fn local_term_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
+    if !std::path::Path::new(&cwd).is_dir() {
+        return Err(format!("теки не існує: {cwd}"));
+    }
+    let pty_system = portable_pty::native_pty_system();
+    let pair = pty_system
+        .openpty(portable_pty::PtySize {
+            rows: rows.max(4),
+            cols: cols.max(20),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("pty: {e}"))?;
+
+    let shell = local_shell();
+    let mut cmd = portable_pty::CommandBuilder::new(&shell[0]);
+    for a in &shell[1..] {
+        cmd.arg(a);
+    }
+    cmd.cwd(&cwd);
+    cmd.env("TERM", "xterm-256color");
+
+    let mut child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("{}: {e}", shell[0]))?;
+    drop(pair.slave);
+
+    let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+
+    let sid = format!("l{}", child.process_id().unwrap_or(0));
+    let sid_c = sid.clone();
+    let app_c = app.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 32768];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let _ = app_c.emit(
+                        "term-output",
+                        serde_json::json!({ "sid": sid_c, "data_b64": b64().encode(&buf[..n]) }),
+                    );
+                }
+            }
+        }
+        let _ = child.wait();
+        let _ = app_c.emit("term-closed", serde_json::json!({ "sid": sid_c }));
+    });
+
+    state.ptys.lock().unwrap().insert(
+        sid.clone(),
+        PtyHandle {
+            writer,
+            master: pair.master,
+        },
+    );
+    Ok(sid)
+}
+
+/// Улюблений шелл користувача: на Windows — PowerShell, деінде — $SHELL.
+fn local_shell() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        for exe in ["pwsh.exe", "powershell.exe"] {
+            if which(exe) {
+                return vec![exe.into(), "-NoLogo".into()];
+            }
+        }
+        vec!["cmd.exe".into()]
+    }
+    #[cfg(not(windows))]
+    {
+        let sh = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+        vec![sh, "-l".into()]
+    }
+}
+
+#[cfg(windows)]
+fn which(exe: &str) -> bool {
+    std::env::var("PATH")
+        .map(|p| {
+            std::env::split_paths(&p).any(|d| d.join(exe).exists())
+        })
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub fn host_term_input(state: State<'_, AppState>, sid: String, data_b64: String) -> Result<(), String> {
     use std::io::Write;
@@ -1038,7 +1424,7 @@ pub async fn compose_cmd(
     action: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
-    if !matches!(action.as_str(), "up" | "down" | "restart" | "pull") {
+    if !matches!(action.as_str(), "up" | "down" | "restart" | "pull" | "build") {
         return Err(format!("невідома compose-дія: {action}"));
     }
 
@@ -1063,6 +1449,10 @@ pub async fn compose_cmd(
     let stages: Vec<Vec<String>> = match action.as_str() {
         "pull" => vec![
             vec!["compose".into(), "pull".into()],
+            vec!["compose".into(), "up".into(), "-d".into()],
+        ],
+        "build" => vec![
+            vec!["compose".into(), "build".into()],
             vec!["compose".into(), "up".into(), "-d".into()],
         ],
         "up" => vec![vec!["compose".into(), "up".into(), "-d".into(), "--remove-orphans".into()]],

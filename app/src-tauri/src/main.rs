@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clipboard;
 mod containers;
 mod files;
 mod forward;
@@ -11,6 +12,7 @@ mod procguard;
 mod resources;
 mod security;
 mod term;
+mod update;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,6 +46,7 @@ pub struct AppState {
     pub forwards: Mutex<HashMap<String, forward::ForwardHandle>>,
     pub multi_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     pub profiles_path: PathBuf,
+    pub projects_path: PathBuf,
 }
 
 impl AppState {
@@ -157,6 +160,104 @@ fn delete_profile(state: State<'_, AppState>, id: String) -> Vec<Profile> {
     list.retain(|p| p.id != id || p.id == "local");
     save_profiles_file(&state.profiles_path, &list);
     list
+}
+
+/* ── локальні проєкти ─────────────────────────────────
+   Тека на машині користувача, яку зручно тримати під рукою:
+   подивитися файли, відкрити консоль просто там і перезібрати. */
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+fn load_projects(path: &PathBuf) -> Vec<Project> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_projects_file(path: &PathBuf, list: &[Project]) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, serde_json::to_string_pretty(list).unwrap());
+}
+
+#[tauri::command]
+fn list_projects(state: State<'_, AppState>) -> Vec<Project> {
+    load_projects(&state.projects_path)
+}
+
+#[tauri::command]
+fn save_project(state: State<'_, AppState>, mut project: Project) -> Result<Vec<Project>, String> {
+    let norm = project.path.replace('\\', "/");
+    let norm = norm.trim_end_matches('/').to_string();
+    let probe = std::path::Path::new(&project.path);
+    if !probe.is_dir() {
+        return Err(format!("теки не існує: {}", project.path));
+    }
+    project.path = if norm.is_empty() { "/".into() } else { norm };
+    if project.name.trim().is_empty() {
+        project.name = project
+            .path
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or("проєкт")
+            .to_string();
+    }
+    let mut list = load_projects(&state.projects_path);
+    if project.id.is_empty() {
+        project.id = format!(
+            "j{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+    }
+    match list.iter_mut().find(|p| p.id == project.id) {
+        Some(ex) => *ex = project,
+        None => list.push(project),
+    }
+    save_projects_file(&state.projects_path, &list);
+    Ok(list)
+}
+
+#[tauri::command]
+fn delete_project(state: State<'_, AppState>, id: String) -> Vec<Project> {
+    let mut list = load_projects(&state.projects_path);
+    list.retain(|p| p.id != id);
+    save_projects_file(&state.projects_path, &list);
+    list
+}
+
+/// Що є в теці проєкту: compose-файл, Dockerfile, git. Від цього залежить,
+/// які дії показувати.
+#[tauri::command]
+fn project_probe(path: String) -> serde_json::Value {
+    let dir = std::path::Path::new(&path);
+    if !dir.is_dir() {
+        return serde_json::json!({ "exists": false });
+    }
+    let compose = [
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+    ]
+    .iter()
+    .find(|f| dir.join(f).is_file())
+    .map(|f| f.to_string());
+    serde_json::json!({
+        "exists": true,
+        "compose": compose,
+        "dockerfile": dir.join("Dockerfile").is_file(),
+        "git": dir.join(".git").exists(),
+    })
 }
 
 /* ── connections ──────────────────────────────────────── */
@@ -392,12 +493,20 @@ fn spawn_events_stream(
                 match ev {
                     Ok(msg) => {
                         if matches!(msg.typ, Some(EventMessageTypeEnum::CONTAINER)) {
+                            // імʼя та код виходу беремо з самої події: інакше
+                            // застосунок не може сказати нічого про контейнер
+                            // на сервері, який зараз не відкритий
+                            let actor = msg.actor.unwrap_or_default();
+                            let attrs = actor.attributes.unwrap_or_default();
                             let _ = app.emit(
                                 "docker-event",
                                 serde_json::json!({
                                     "conn": conn,
                                     "action": msg.action,
-                                    "id": msg.actor.and_then(|a| a.id),
+                                    "id": actor.id,
+                                    "name": attrs.get("name").cloned().unwrap_or_default(),
+                                    "image": attrs.get("image").cloned().unwrap_or_default(),
+                                    "exit_code": attrs.get("exitCode").cloned().unwrap_or_default(),
                                 }),
                             );
                         }
@@ -426,6 +535,7 @@ fn main() {
         }
     }
     let profiles_path = data_dir.join("profiles.json");
+    let projects_path = data_dir.join("projects.json");
 
     // прибираємо ssh-процеси, що лишились від аварійного завершення,
     // і беремо всі майбутні під нагляд ОС
@@ -448,6 +558,7 @@ fn main() {
             forwards: Mutex::new(HashMap::new()),
             multi_tasks: Mutex::new(Vec::new()),
             profiles_path,
+            projects_path,
         })
         .invoke_handler(tauri::generate_handler![
             list_profiles,
@@ -458,7 +569,13 @@ fn main() {
             disconnect,
             active_connections,
             open_url,
+            clipboard::clipboard_read,
+            list_projects,
+            save_project,
+            delete_project,
+            project_probe,
             containers::list_containers,
+            containers::containers_stats_snapshot,
             containers::container_action,
             containers::inspect_container,
             containers::start_logs,
@@ -499,6 +616,10 @@ fn main() {
             host::host_term_close,
             host::host_monitor_start,
             host::host_monitor_stop,
+            host::host_du,
+            host::host_fs_find,
+            host::local_term_open,
+            update::check_update,
             host::compose_cmd,
             files::fs_rename,
             files::fs_chmod,
@@ -532,6 +653,7 @@ fn main() {
             notify::tg_status,
             notify::tg_forget,
             notify::tg_send,
+            notify::tg_detect_chat,
         ])
         .setup(|app| {
             let win = app.get_webview_window("main").unwrap();

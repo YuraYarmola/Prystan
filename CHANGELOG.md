@@ -6,6 +6,96 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Local projects** — pin a folder on your own machine and get its files, a shell
+  opened right inside it, and `compose up / build / down` without leaving the app
+- **Folder size analysis** (`du`) for servers and local projects: one level deep with
+  bars, drill down into any folder, reachable from the file manager context menu
+- `compose build` as a first-class action for stacks and projects
+- Telegram: pick which events are sent (container crash, resource thresholds,
+  lost connection, finished compose action) and find `chat_id` automatically —
+  paste the bot token, message the bot, and the id fills itself in
+
+### Fixed
+- **Alerts only worked for the server you were already looking at.** Container
+  events from every other connection were dropped at the door, so a crash on
+  production stayed silent while you had another host open. Events now carry the
+  container name and exit code, and alerts fire for every connection
+- **A container that had been running since before the app started never
+  alerted.** "Unexpected" was decided by whether we had seen it start; it is now
+  decided by whether *we* stopped it, which is what the word actually means
+- **Resource thresholds were only checked while a server was on screen.** Every
+  connected host is now monitored — the focused one every 3 s, the rest on a slow
+  background interval that can be tuned or turned off
+- Crash loops are called out: three deaths within ten minutes raise a separate
+  notification and mark the container in the list
+- The left panel's drag limit did not match its CSS minimum, so it could be
+  pulled narrower than it would then render
+
+### Removed
+- Screenshots taken against real servers. They are replaced with demo-mode captures —
+  no real host names, addresses or project names remain in the repository
+
+### Added
+- **Demo mode** (⚙ → Demo mode) — the app runs on invented servers, containers, logs
+  and files, so it can be explored without Docker and captured for documentation
+  without exposing anyone's infrastructure. Addresses come from the ranges reserved
+  for documentation (RFC 5737). Every screenshot in the README is taken from it
+- A full **usage guide** in both READMEs: every feature, how to switch it on and how
+  to use it, with keyboard shortcuts and where settings and secrets are stored
+- **Load view** — one `docker stats`-style table for every running container,
+  sortable by CPU, memory, network or process count, with a click through to the
+  container
+- **Keyboard navigation**: arrows walk the list, `Enter` opens, `←`/`→` fold
+  stacks, `Del` removes, `?` shows a shortcut sheet
+- **Context menu on containers and stacks** — logs, shell, files, inspect,
+  start/stop/restart, copy name or id, delete
+- **Recursive file search** over a server or a project, by file name or by
+  content, with a jump to the containing folder
+- **Copy a whole error** from the log view — the multi-line block is already
+  detected, now it can be taken in one action
+- **Update check** against GitHub releases, with a badge in the header
+- The left panel can be dragged to any width; the editor can be docked to the
+  side so logs stay visible while you edit
+- Every port of a container is reachable, not only the first one
+- The list filter also matches ports, container ids and status text
+- A first-run screen that offers the three ways to start instead of an empty pane
+- Settings for refresh intervals, background monitoring, log buffer, default
+  shell, delete confirmations and update checks — the key was handed to the shell as
+  `^V` instead of letting the browser's own paste run. `Ctrl+C` now copies when
+  there is a selection and still sends the interrupt when there is none
+- Right-click in the terminal silently pasted instead of offering a menu; there
+  is now a real one — copy, paste, select all, clear screen — plus a menu in the
+  log view (copy line / copy everything / search / export / clear) and a copy
+  entry anywhere text is selected
+- Clipboard reading moved to the native side: `navigator.clipboard.readText()`
+  asks WebView2 for permission and hangs until it is answered
+- Context menus could stop opening after one had been used: every menu added
+  one-shot "close" listeners that were never removed when it closed by any other
+  route, and a leftover listener then killed the next menu the moment it
+  appeared. The lifecycle is now a single set of listeners installed once, with
+  one flag for state — nothing accumulates. Closing on `Escape`, on window blur
+  and on a press anywhere outside the menu now works regardless of what any
+  handler underneath does with the event
+
+### Changed
+- Emoji replaced with a single outline icon set that inherits the text colour, so
+  the interface reads the same in light and dark themes and on every platform
+- Health is now shown by the indicator itself: healthy pulses green, unhealthy but
+  running pulses amber, anything stopped is a steady grey dot
+- Switching servers clears the previous server's data and shows a skeleton and a
+  progress bar instead of silently displaying the old list
+- Container state changes land in the list almost immediately: every action
+  refreshes on its own, a spinner holds until the state really changes, and the
+  container list is polled cheaply between Docker events
+- Logs render in batches per frame — a 10 000-line history opens already scrolled
+  to the end instead of visibly crawling through the buffer
+- Language is chosen from a dropdown instead of a cycling button
+- File manager context menu opens anywhere in the pane, including deep folders whose
+  listing leaves no empty space
+- The browser's own "Save as…" context menu no longer appears; it stays only in text
+  fields where paste is genuinely useful
+
 ## [0.1.0] — 2026-08-06
 
 ### Files

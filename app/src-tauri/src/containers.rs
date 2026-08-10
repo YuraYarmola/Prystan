@@ -102,6 +102,106 @@ pub async fn list_containers(
         .collect())
 }
 
+/* ── зріз навантаження по всіх контейнерах ───────────
+   Стрім статистики піднімається лише для відкритого контейнера, тож питання
+   «хто зʼїв сервер» доводилось перебирати вручну. Тут — один знімок по всіх
+   запущених одразу; Docker сам робить два заміри, тому CPU% справжній. */
+
+#[derive(Serialize)]
+pub struct StatRow {
+    id: String,
+    name: String,
+    cpu_pct: f64,
+    mem_usage: u64,
+    mem_limit: u64,
+    net_rx: u64,
+    net_tx: u64,
+    pids: u64,
+}
+
+/// CPU% із пари замірів усередині одного семпла.
+fn cpu_pct_of(st: &bollard::models::ContainerStatsResponse) -> f64 {
+    let cur = st
+        .cpu_stats
+        .as_ref()
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage)
+        .unwrap_or(0);
+    let pre = st
+        .precpu_stats
+        .as_ref()
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage)
+        .unwrap_or(0);
+    let sys = st.cpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0);
+    let pre_sys = st.precpu_stats.as_ref().and_then(|c| c.system_cpu_usage).unwrap_or(0);
+    let ncpu = st
+        .cpu_stats
+        .as_ref()
+        .and_then(|c| c.online_cpus)
+        .unwrap_or(1)
+        .max(1) as f64;
+    let sys_delta = sys.saturating_sub(pre_sys) as f64;
+    if sys_delta <= 0.0 {
+        return 0.0;
+    }
+    cur.saturating_sub(pre) as f64 / sys_delta * ncpu * 100.0
+}
+
+#[tauri::command]
+pub async fn containers_stats_snapshot(
+    state: State<'_, AppState>,
+    conn: String,
+) -> Result<Vec<StatRow>, String> {
+    let docker = state.docker(&conn)?;
+    let opts = ListContainersOptionsBuilder::new().all(false).build();
+    let list = docker
+        .list_containers(Some(opts))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let targets: Vec<(String, String)> = list
+        .into_iter()
+        .map(|c| {
+            let name = c
+                .names
+                .unwrap_or_default()
+                .first()
+                .map(|n| n.trim_start_matches('/').to_string())
+                .unwrap_or_default();
+            (c.id.unwrap_or_default(), name)
+        })
+        .filter(|(id, _)| !id.is_empty())
+        .collect();
+
+    // по 8 запитів одночасно: демон не любить, коли їх сотня
+    let rows = futures_util::stream::iter(targets.into_iter().map(|(id, name)| {
+        let docker = docker.clone();
+        async move {
+            let opts = StatsOptionsBuilder::new().stream(false).one_shot(false).build();
+            let st = docker.stats(&id, Some(opts)).next().await?.ok()?;
+            let cpu_pct = cpu_pct_of(&st);
+            let net = st.networks.clone().unwrap_or_default();
+            Some(StatRow {
+                id,
+                name,
+                cpu_pct,
+                mem_usage: st.memory_stats.as_ref().and_then(|m| m.usage).unwrap_or(0),
+                mem_limit: st.memory_stats.as_ref().and_then(|m| m.limit).unwrap_or(0),
+                net_rx: net.values().filter_map(|n| n.rx_bytes).sum(),
+                net_tx: net.values().filter_map(|n| n.tx_bytes).sum(),
+                pids: st.pids_stats.as_ref().and_then(|p| p.current).unwrap_or(0),
+            })
+        }
+    }))
+    .buffer_unordered(8)
+    .filter_map(|x| async move { x })
+    .collect::<Vec<_>>()
+    .await;
+
+    Ok(rows)
+}
+
 #[tauri::command]
 pub async fn container_action(
     state: State<'_, AppState>,

@@ -114,13 +114,23 @@ async function restoreConnections() {
 }
 
 function switchConn(id) {
+  const changed = S.activeConn !== id;
   S.activeConn = id;
   S.selected = null; S.selectedStack = null; S.view = "welcome";
   S.bulkSel.clear();
+  if (changed) {
+    // дані попереднього сервера більше не дійсні: інакше секунду-дві
+    // показувалися б чужі контейнери, ніби нічого й не перемкнулось
+    S.containers = []; S.images = []; S.volumes = []; S.networks = [];
+    S.pending = {};
+    S.statsFor = null;
+    S.loading = true;
+  }
   const info = S.conns[id]?.info;
   $("engine").textContent = info ? `Docker ${info.version} · API ${info.api_version} · ${info.os}` : "";
-  $("ro-badge").style.display = isReadonly() ? "inline-block" : "none";
+  $("ro-badge").style.display = isReadonly() ? "inline-flex" : "none";
   persist();
+  renderTree();
   renderDetail();
   refreshAll();
 }
@@ -132,7 +142,9 @@ function renderConnBox() {
   const sec = document.createElement("div");
   sec.className = "section";
   const upN = Object.values(S.conns).filter(c => c.up).length;
-  sec.innerHTML = `${S.connsCollapsed ? "▶" : "▼"} ${t("tree.connections")} <span class="cnt">${upN}/${S.profiles.length}</span><span class="plus" title="${esc(t("tree.connections.manage"))}">＋</span>`;
+  sec.innerHTML = `${ic(S.connsCollapsed ? "chevronRight" : "chevronDown", "sm")} ${t("tree.connections")}` +
+    `<span class="cnt">${upN}/${S.profiles.length}</span>` +
+    `<span class="plus" title="${esc(t("tree.connections.manage"))}">${ic("plus")}</span>`;
   sec.onclick = e => {
     if (e.target.classList.contains("plus")) {
       editingProfile = null; fillProfileForm(null); renderProfileList();
@@ -159,8 +171,9 @@ function renderConnBox() {
       chip.innerHTML =
         `<span class="cdot ${c?.up ? "up" : (c?.connecting || waiting) ? "connecting" : ""}"></span>` +
         `<span class="nm">${esc(p.name)}</span>` +
-        (p.readonly ? '<span class="ro" title="read-only">🔒</span>' : "") +
-        `<span class="pw" title="${esc(c?.up ? t("conn.disconnect") : t("conn.connect"))}">${c?.up ? "⏻" : "▶"}</span>`;
+        (c?.connecting ? `<span class="spin"></span>` : "") +
+        (p.readonly ? `<span class="ro" title="read-only">${ic("lock", "sm")}</span>` : "") +
+        `<span class="pw" title="${esc(c?.up ? t("conn.disconnect") : t("conn.connect"))}">${ic(c?.up ? "power" : "play", "sm")}</span>`;
       chip.onclick = e => {
         if (e.target.classList.contains("pw")) {
           e.stopPropagation();
@@ -182,12 +195,12 @@ function renderProfileList() {
     const div = document.createElement("div");
     div.className = "pitem";
     div.innerHTML = `
-      <span style="width:8px;height:8px;border-radius:50%;background:${up ? "var(--green)" : "var(--dim)"};flex:none"></span>
-      <span class="pname">${esc(p.name)}${p.readonly ? " 🔒" : ""}</span>
+      <span class="cdot ${up ? "up" : ""}"></span>
+      <span class="pname">${esc(p.name)}${p.readonly ? ic("lock", "sm") : ""}</span>
       <span class="pdetail">${p.kind === "ssh" ? `ssh ${esc(p.user)}@${esc(p.host)}:${p.port}` : p.kind === "tcp" ? `tcp ${esc(p.host)}:${p.port}` : t("conn.localSocket")}</span>
-      ${p.autoconnect ? `<span class="hint" title="${esc(t("conn.autoHint"))}">⟲</span>` : ""}
-      ${up ? `<button data-x="dis">${t("conn.disconnect")}</button>` : `<button data-x="con" class="primary">${t("conn.connect")}</button>`}
-      ${p.id !== "local" ? `<button data-x="edit">✎</button><button data-x="del" class="danger">🗑</button>` : ""}`;
+      ${p.autoconnect ? `<span class="hint" title="${esc(t("conn.autoHint"))}">${ic("repeat", "sm")}</span>` : ""}
+      ${up ? `<button data-x="dis">${ic("power")} ${t("conn.disconnect")}</button>` : `<button data-x="con" class="primary">${ic("play")} ${t("conn.connect")}</button>`}
+      ${p.id !== "local" ? `<button data-x="edit" title="${esc(t("conn.edit"))}">${ic("pencil")}</button><button data-x="del" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>` : ""}`;
     div.querySelectorAll("button").forEach(b => b.onclick = async () => {
       const x = b.dataset.x;
       if (x === "con") { $("conn-modal").classList.remove("open"); connectProfile(p.id); }
@@ -283,7 +296,7 @@ async function openContainerPort(c, mapping) {
         : `${t("ctr.openBrowser")}: ${r.url}`, "ok", 5000);
     } catch (e) {
       // браузер не відкрився — принаймні даємо готовий URL
-      await navigator.clipboard.writeText(r.url).catch(() => {});
+      await copyText(r.url, true);
       toast(`${r.url} — ${t("ctr.urlCopied")} (${e})`, "warn", 9000);
     }
   } catch (e) { toast("Port-forward: " + e); }

@@ -1,8 +1,24 @@
 "use strict";
 /* Файли (контейнер і хост) + редактор */
 
+/* Файловий менеджер працює над трьома джерелами: контейнер, хост по SSH
+   і тека проєкту на цій машині. Різниця лише в тому, яку команду кликати. */
+const isFsHost = () => S.view === "server" || S.view === "project";
+const fsConn = () => (S.view === "project" ? "local" : S.activeConn);
+const fsKind = () => (S.view === "project" ? "local" : activeProfile()?.kind);
+
 function curPath() {
-  return S.filesPath[targetKey()] || (isHostView() ? (activeProfile()?.kind === "local" ? "C:/" : "/") : "/");
+  const saved = S.filesPath[targetKey()];
+  if (saved) return saved;
+  if (S.view === "project") return S.project?.path ?? "/";
+  if (isFsHost() && fsKind() === "local") return "C:/";
+  return "/";
+}
+/** Вище цієї теки підніматись нема куди: проєкт не випускає за свої межі. */
+function fsRoot() {
+  if (S.view === "project") return S.project?.path ?? "/";
+  if (isFsHost() && fsKind() === "local") return "C:/";
+  return "/";
 }
 function setPath(p) {
   S.filesPath[targetKey()] = p;
@@ -10,7 +26,7 @@ function setPath(p) {
 }
 
 function fsInvoke(op, extra = {}) {
-  if (isHostView()) return invoke("host_" + op, { conn: S.activeConn, ...extra });
+  if (isFsHost()) return invoke("host_" + op, { conn: fsConn(), ...extra });
   return invoke(op, { conn: S.activeConn, id: S.selected.id, ...extra });
 }
 
@@ -23,7 +39,8 @@ async function openFiles() {
     S.lastEntries = entries;
     renderFiles(entries);
   } catch (e) {
-    box.innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}${!isHostView() && S.selected?.state !== "running" ? "<br><br>" + t("files.stoppedHint") : ""}</div>`;
+    box.innerHTML = errorBox(e) +
+      (!isFsHost() && S.selected?.state !== "running" ? `<div class="hint" style="text-align:center">${t("files.stoppedHint")}</div>` : "");
   }
 }
 
@@ -33,21 +50,22 @@ function renderFiles(allEntries) {
   const entries = ff ? allEntries.filter(e => e.name.toLowerCase().includes(ff)) : allEntries;
   const rows = entries.map(e => `
     <tr class="clickable" data-name="${esc(e.name)}" data-dir="${e.is_dir}">
-      <td>${e.is_dir ? "📁" : e.is_link ? "🔗" : "📄"} ${esc(e.name)}</td>
+      <td class="fname">${ic(e.is_dir ? "folder" : e.is_link ? "link" : "file")} ${esc(e.name)}</td>
       <td style="text-align:right">${e.is_dir ? "" : fmtBytes(e.size)}</td>
       <td class="mono">${esc(e.perms)}</td>
       <td class="mono">${esc(e.owner)}</td>
       <td><div class="racts">
-        ${!e.is_dir ? `<button data-f="edit" title="${t("files.edit")}">✎</button>` : ""}
-        <button data-f="dl" title="${t("files.download")}">⇩</button>
-        <button data-f="mv" title="${t("files.rename")}">✏</button>
-        ${isHostView() && activeProfile()?.kind === "ssh" ? `<button data-f="chmod" title="${t("files.chmod")}">🔑</button>` : ""}
-        <button data-f="del" class="danger" title="${t("files.delete")}">🗑</button>
+        ${!e.is_dir ? `<button data-f="edit" title="${esc(t("files.edit"))}">${ic("pencil")}</button>` : ""}
+        <button data-f="dl" title="${esc(t("files.download"))}">${ic("download")}</button>
+        <button data-f="mv" title="${esc(t("files.rename"))}">${ic("move")}</button>
+        ${isFsHost() && fsKind() === "ssh" ? `<button data-f="chmod" title="${esc(t("files.chmod"))}">${ic("key")}</button>` : ""}
+        <button data-f="del" class="danger" title="${esc(t("files.delete"))}">${ic("trash")}</button>
       </div></td>
     </tr>`).join("");
+  const up = curPath() !== fsRoot();
   box.innerHTML = `<table class="grid">
     <thead><tr><th>${t("files.name")}</th><th style="text-align:right">${t("files.size")}</th><th>${t("files.perms")}</th><th>${t("files.owner")}</th><th style="width:150px"></th></tr></thead>
-    <tbody>${curPath() !== "/" ? `<tr class="clickable" data-up="1"><td>📁 ..</td><td></td><td></td><td></td><td></td></tr>` : ""}${rows}</tbody>
+    <tbody>${up ? `<tr class="clickable" data-up="1"><td class="fname">${ic("folderOpen")} ..</td><td></td><td></td><td></td><td></td></tr>` : ""}${rows}</tbody>
   </table>${entries.length === 0 ? `<div class="placeholder">${allEntries.length ? t("files.noMatch") : t("files.empty")}</div>` : ""}`;
 
   box.querySelectorAll("tr.clickable").forEach(tr => {
@@ -62,26 +80,7 @@ function renderFiles(allEntries) {
       if (f === "mv") renamePath(full, tr.dataset.name);
       if (f === "chmod") chmodPath(full);
     };
-    // правий клік по рядку — меню для конкретного об'єкта
-    tr.oncontextmenu = e => {
-      e.preventDefault();
-      e.stopPropagation();
-      S.fsSelected = tr.dataset.up ? null : tr.dataset.name;
-      box.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel"));
-      if (!tr.dataset.up) tr.classList.add("sel");
-      const entry = tr.dataset.up ? null : entries.find(x => x.name === tr.dataset.name);
-      showContextMenu(e.clientX, e.clientY, fileMenuItems(entry));
-    };
   });
-
-  // правий клік по порожньому місцю — меню самої теки
-  box.oncontextmenu = e => {
-    if (e.target.closest("tr")) return;
-    e.preventDefault();
-    S.fsSelected = null;
-    box.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel"));
-    showContextMenu(e.clientX, e.clientY, fileMenuItems(null));
-  };
 
   // підсвічуємо вирізане
   if (S.fsClip?.op === "cut" && S.fsClip.dir === curPath()) {
@@ -95,6 +94,26 @@ function renderFiles(allEntries) {
   }
 }
 
+/* Праву кнопку слухає вся панель, а не таблиця: у глибокій теці список
+   часто заповнює екран, і «порожнього місця» під ним просто немає —
+   раніше меню теки в такому разі відкрити було ніяк. */
+function wireFilesContextMenu() {
+  $("pane-files").addEventListener("contextmenu", e => {
+    if (!$("pane-files").classList.contains("active")) return;
+    if (e.target.closest(".toolbar")) return;         // у полях лишаємо системне меню
+    e.preventDefault();
+    e.stopPropagation();
+    const box = $("files-table");
+    const tr = e.target.closest("tr.clickable");
+    const name = tr && !tr.dataset.up ? tr.dataset.name : null;
+    S.fsSelected = name;
+    box.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel"));
+    if (tr && name) tr.classList.add("sel");
+    const entry = name ? S.lastEntries.find(x => x.name === name) : null;
+    showContextMenu(e.clientX, e.clientY, fileMenuItems(entry));
+  });
+}
+
 /* ═══ контекстне меню файлового менеджера ═══
    entry === null означає клік по порожньому місцю (меню теки) */
 function fileMenuItems(entry) {
@@ -106,18 +125,18 @@ function fileMenuItems(entry) {
 
   if (entry) {
     items.push({
-      icon: entry.is_dir ? "📂" : "✎",
+      icon: entry.is_dir ? "folderOpen" : "pencil",
       label: entry.is_dir ? t("ctx.open") : t("files.edit"),
       run: () => entry.is_dir ? (setPath(full), openFiles()) : openEditor(full),
     });
-    items.push({ icon: "⇩", label: t("files.download"), run: () => downloadPath(full) });
+    items.push({ icon: "download", label: t("files.download"), run: () => downloadPath(full) });
     items.push("-");
-    items.push({ icon: "⧉", label: t("ctx.copy"), hint: "Ctrl+C", run: () => clipSet(entry, "copy") });
-    items.push({ icon: "✂", label: t("ctx.cut"), hint: "Ctrl+X", disabled: ro, run: () => clipSet(entry, "cut") });
+    items.push({ icon: "copy", label: t("ctx.copy"), hint: "Ctrl+C", run: () => clipSet(entry, "copy") });
+    items.push({ icon: "scissors", label: t("ctx.cut"), hint: "Ctrl+X", disabled: ro, run: () => clipSet(entry, "cut") });
   }
 
   items.push({
-    icon: "📋",
+    icon: "clipboard",
     label: t("ctx.paste"),
     hint: "Ctrl+V",
     disabled: !hasClip || ro,
@@ -126,22 +145,25 @@ function fileMenuItems(entry) {
 
   if (entry) {
     items.push("-");
-    items.push({ icon: "✏", label: t("files.rename"), hint: "F2", disabled: ro, run: () => renamePath(full, entry.name) });
-    items.push({ icon: "⇄", label: t("ctx.moveTo"), disabled: ro, run: () => movePath(full, entry.name) });
-    if (isHostView() && activeProfile()?.kind === "ssh") {
-      items.push({ icon: "🔑", label: t("files.chmod"), disabled: ro, run: () => chmodPath(full) });
+    items.push({ icon: "pencil", label: t("files.rename"), hint: "F2", disabled: ro, run: () => renamePath(full, entry.name) });
+    items.push({ icon: "move", label: t("ctx.moveTo"), disabled: ro, run: () => movePath(full, entry.name) });
+    if (isFsHost() && fsKind() === "ssh") {
+      items.push({ icon: "key", label: t("files.chmod"), disabled: ro, run: () => chmodPath(full) });
     }
-    items.push({ icon: "🔗", label: t("ctx.copyPath"), run: () => { navigator.clipboard.writeText(full); toast(t("files.copied") + ": " + full, "ok", 2000); } });
+    items.push({ icon: "link", label: t("ctx.copyPath"), run: () => copyText(full) });
   }
 
   items.push("-");
-  items.push({ icon: "📄", label: t("ctx.newFile"), disabled: ro, run: () => createEntry(false) });
-  items.push({ icon: "📁", label: t("files.mkdir"), disabled: ro, run: () => createEntry(true) });
-  items.push({ icon: "⟳", label: t("common.refresh"), run: () => openFiles() });
+  items.push({ icon: "filePlus", label: t("ctx.newFile"), disabled: ro, run: () => createEntry(false) });
+  items.push({ icon: "folderPlus", label: t("files.mkdir"), disabled: ro, run: () => createEntry(true) });
+  if (isFsHost() && (!entry || entry.is_dir)) {
+    items.push({ icon: "pieChart", label: t("du.analyze"), run: () => gotoDu(entry ? full : dir) });
+  }
+  items.push({ icon: "rotate", label: t("common.refresh"), run: () => openFiles() });
 
   if (entry) {
     items.push("-");
-    items.push({ icon: "🗑", label: t("files.delete"), hint: "Del", danger: true, disabled: ro, run: () => deletePath(full) });
+    items.push({ icon: "trash", label: t("files.delete"), hint: "Del", danger: true, disabled: ro, run: () => deletePath(full) });
   }
   return items;
 }
@@ -212,7 +234,9 @@ async function downloadPath(full) {
 
 async function deletePath(full) {
   if (!guardRW("guard.delete")) return;
-  if (!(await ask({ title: t("files.deleteQ"), text: `<b>${esc(full)}</b> ` + t("files.deleteText", { where: isHostView() ? t("files.onServer") : t("files.inContainer") }), okLabel: t("common.delete") }))) return;
+  if (!(await ask({ title: t("files.deleteQ"), text: `<b>${esc(full)}</b> ` + t("files.deleteText", {
+      where: S.view === "project" ? esc(S.project?.name ?? "") : isFsHost() ? t("files.onServer") : t("files.inContainer"),
+    }), okLabel: t("common.delete") }))) return;
   try { await fsInvoke("fs_delete", { path: full }); openFiles(); }
   catch (e) { toast("Видалення: " + e); }
 }
@@ -256,8 +280,12 @@ function wireFilesUI() {
     }
     if (e.key === "Escape") $("fs-path").value = curPath();
   };
-  $("fs-up").onclick = () => { setPath(parentPath(curPath())); openFiles(); };
-  $("fs-copy").onclick = () => { navigator.clipboard.writeText(curPath()); toast(t("files.copied") + ": " + curPath(), "ok", 2000); };
+  $("fs-up").onclick = () => {
+    if (curPath() === fsRoot()) return;
+    setPath(parentPath(curPath()));
+    openFiles();
+  };
+  $("fs-copy").onclick = () => copyText(curPath());
   $("fs-filter").oninput = () => renderFiles(S.lastEntries);
   $("fs-refresh").onclick = () => openFiles();
   $("fs-mkdir").onclick = async () => {
@@ -267,8 +295,11 @@ function wireFilesUI() {
     try { await fsInvoke("fs_mkdir", { path: joinPath(curPath(), name) }); openFiles(); }
     catch (e) { toast("mkdir: " + e); }
   };
+  $("fs-du").onclick = () => gotoDu(curPath());
+  wireFindUI();
   $("fs-upload-btn").onclick = () => $("fs-upload-input").click();
   $("fs-upload-input").onchange = async e => { await uploadFiles(e.target.files); e.target.value = ""; };
+  wireFilesContextMenu();
 
   /* гарячі клавіші у файловому менеджері */
   $("files-table").addEventListener("keydown", () => {});
@@ -287,7 +318,7 @@ function wireFilesUI() {
     if (e.ctrlKey && e.code === "KeyC" && entry) { e.preventDefault(); clipSet(entry, "copy"); }
     if (e.ctrlKey && e.code === "KeyX" && entry) { e.preventDefault(); clipSet(entry, "cut"); }
     if (e.ctrlKey && e.code === "KeyV" && S.fsClip) { e.preventDefault(); clipPaste(curPath()); }
-    if (e.key === "Backspace" && curPath() !== "/") { e.preventDefault(); setPath(parentPath(curPath())); openFiles(); }
+    if (e.key === "Backspace" && curPath() !== fsRoot()) { e.preventDefault(); setPath(parentPath(curPath())); openFiles(); }
   });
 
   /* B5 — drag & drop із провідника */
@@ -298,6 +329,60 @@ function wireFilesUI() {
     e.preventDefault();
     pane.classList.remove("dragging");
     if (e.dataTransfer?.files?.length) await uploadFiles(e.dataTransfer.files);
+  });
+}
+
+/* ═══ рекурсивний пошук ═══
+   Фільтр у таблиці бачить лише відкриту теку, тож «де лежить цей конфіг»
+   доводилось питати в консолі. Тут — пошук по імені або по вмісту вглиб. */
+
+function openFind() {
+  if (!isFsHost()) return toast(t("find.hostOnly"), "warn", 4000);
+  $("find-where").textContent = "· " + curPath();
+  $("find-modal").dataset.root = curPath();
+  $("find-results").innerHTML = "";
+  $("find-stat").textContent = "";
+  $("find-modal").classList.add("open");
+  setTimeout(() => $("find-q").focus(), 60);
+}
+
+async function runFind() {
+  const q = $("find-q").value.trim();
+  if (!q) return;
+  const root = $("find-modal").dataset.root || curPath();
+  const mode = $("find-mode").querySelector("button.on")?.dataset.m ?? "name";
+  const conn = fsConn();
+  $("find-stat").innerHTML = `<span class="spin"></span> ${esc(t("find.searching"))}`;
+  $("find-results").innerHTML = "";
+  const t0 = performance.now();
+  try {
+    const items = await invoke("host_fs_find", { conn, path: root, query: q, mode, limit: 400 });
+    $("find-stat").textContent = t("find.result", { n: items.length, ms: Math.round(performance.now() - t0) });
+    if (!items.length) { $("find-results").innerHTML = `<div class="placeholder">${t("deep.none")}</div>`; return; }
+    $("find-results").innerHTML = items.map(i => {
+      const name = i.path.split("/").filter(Boolean).pop() ?? i.path;
+      const dir = parentPath(i.path);
+      return `<div class="hit" data-path="${esc(i.path)}" data-dir="${i.is_dir}">
+        ${ic(i.is_dir ? "folder" : "file")}<b>${esc(name)}</b><span class="p">${esc(dir)}</span></div>`;
+    }).join("");
+    $("find-results").querySelectorAll(".hit").forEach(el => el.onclick = () => {
+      const p = el.dataset.path;
+      $("find-modal").classList.remove("open");
+      if (el.dataset.dir === "true") { setPath(p); openFiles(); }
+      else { setPath(parentPath(p)); S.fsSelected = p.split("/").pop(); openFiles(); }
+    });
+  } catch (e) {
+    $("find-stat").textContent = "";
+    $("find-results").innerHTML = errorBox(e);
+  }
+}
+
+function wireFindUI() {
+  $("fs-find").onclick = openFind;
+  $("find-go").onclick = runFind;
+  $("find-q").onkeydown = e => { if (e.key === "Enter") runFind(); };
+  $("find-mode").querySelectorAll("button").forEach(b => b.onclick = () => {
+    $("find-mode").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
   });
 }
 
@@ -320,10 +405,12 @@ function modeFor(path) {
 }
 
 async function openEditor(path, target = null) {
-  target = target ?? (isHostView() ? "host" : "container");
+  target = target ?? (isFsHost() ? "host" : "container");
+  const conn = target === "host" ? fsConn() : S.activeConn;
+  const cid = target === "host" ? null : S.selected?.id;
   const inv = (op, extra) => target === "host"
-    ? invoke("host_" + op, { conn: S.activeConn, ...extra })
-    : invoke(op, { conn: S.activeConn, id: S.selected.id, ...extra });
+    ? invoke("host_" + op, { conn, ...extra })
+    : invoke(op, { conn, id: cid, ...extra });
   try {
     const r = await inv("fs_read", { path });
     if (r.binary) {
@@ -331,11 +418,13 @@ async function openEditor(path, target = null) {
         downloadPath(path);
       return;
     }
-    S.editorCtx = { path, truncated: r.truncated, target };
-    $("editor-title").textContent = (target === "host" ? "🖥 " : "📦 ") + path + ` (${fmtBytes(r.size)})`;
+    S.editorCtx = { path, truncated: r.truncated, target, conn, cid };
+    $("editor-title").textContent = path + ` (${fmtBytes(r.size)})`;
+    $("editor-title").title = target === "host" ? t("files.onServer") : t("files.inContainer");
     $("editor-note").textContent = r.truncated ? t("editor.truncated") : (isReadonly() ? t("editor.roProfile") : "");
     $("editor-save").disabled = r.truncated || isReadonly();
     $("editor-modal").classList.add("open");
+    document.body.classList.toggle("editor-docked", S.cfg.editorDock);
     if (!S.editor) {
       S.editor = CodeMirror.fromTextArea($("editor-ta"), {
         lineNumbers: true, theme: "material-darker", indentUnit: 2, viewportMargin: 50,
@@ -365,14 +454,14 @@ async function saveEditor() {
   if (!ctx || ctx.truncated) return;
   if (!guardRW("guard.saveFile")) return;
   const inv = (op, extra) => ctx.target === "host"
-    ? invoke("host_" + op, { conn: S.activeConn, ...extra })
-    : invoke(op, { conn: S.activeConn, id: S.selected.id, ...extra });
+    ? invoke("host_" + op, { conn: ctx.conn, ...extra })
+    : invoke(op, { conn: ctx.conn, id: ctx.cid, ...extra });
   try {
     // B6 — бекап .bak перед записом
     const backup = $("editor-backup").checked;
     if (backup && ctx.target === "host") {
-      await invoke("host_fs_read", { conn: S.activeConn, path: ctx.path })
-        .then(r => invoke("host_fs_write", { conn: S.activeConn, path: ctx.path + ".bak", contentB64: r.content_b64 }))
+      await invoke("host_fs_read", { conn: ctx.conn, path: ctx.path })
+        .then(r => invoke("host_fs_write", { conn: ctx.conn, path: ctx.path + ".bak", contentB64: r.content_b64 }))
         .catch(() => {});
     }
     await inv("fs_write", { path: ctx.path, contentB64: strToB64(S.editor.getValue()), backup: ctx.target === "container" ? backup : undefined });
@@ -406,11 +495,24 @@ async function closeEditor() {
     if (!yes) return;
   }
   $("editor-modal").classList.remove("open");
+  document.body.classList.remove("editor-docked");
   S.editorDirty = false;
+}
+
+/** Режим «збоку»: редактор перестає бути модалкою, і логи лишаються видимі. */
+function setEditorDock(on) {
+  S.cfg.editorDock = on;
+  $("editor-modal").classList.toggle("docked", on);
+  document.body.classList.toggle("editor-docked", on && $("editor-modal").classList.contains("open"));
+  $("editor-dock").classList.toggle("primary", on);
+  persist();
+  setTimeout(() => S.editor?.refresh(), 60);
 }
 
 function wireEditorUI() {
   $("editor-save").onclick = saveEditor;
+  $("editor-dock").onclick = () => setEditorDock(!S.cfg.editorDock);
+  setEditorDock(S.cfg.editorDock);
   $("editor-download").onclick = () => S.editorCtx && downloadPath(S.editorCtx.path);
   $("editor-search").oninput = () => { edCursor = null; edFind("next"); };
   $("editor-search").onkeydown = e => {

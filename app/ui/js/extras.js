@@ -30,7 +30,7 @@ async function showLayers(image) {
         <th>${t("img.command")}</th><th>${t("insp.created")}</th></tr></thead>
         <tbody>${rows}</tbody></table>`;
   } catch (e) {
-    $("layers-body").innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`;
+    $("layers-body").innerHTML = errorBox(e);
   }
 }
 
@@ -61,7 +61,7 @@ async function loadDiff() {
       </div>
       <pre style="max-height:340px">${rows}</pre>`;
   } catch (e) {
-    box.innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`;
+    box.innerHTML = errorBox(e);
   }
 }
 
@@ -100,7 +100,7 @@ async function scanImage(image) {
     scanData = r;
     renderScan();
   } catch (e) {
-    $("scan-summary").innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`;
+    $("scan-summary").innerHTML = errorBox(e);
   }
 }
 
@@ -140,7 +140,7 @@ function renderScanTable() {
   });
   const color = s => ({ CRITICAL: "var(--red)", HIGH: "#ff7b45", MEDIUM: "var(--yellow)" }[s] || "var(--dim)");
   if (!r.total) {
-    $("scan-body").innerHTML = `<div class="placeholder" style="color:var(--green)">✓ ${t("scan.clean")}</div>`;
+    $("scan-body").innerHTML = `<div class="placeholder" style="color:var(--green)">${ic("check")} ${t("scan.clean")}</div>`;
     return;
   }
   $("scan-body").innerHTML = `<table class="grid">
@@ -165,8 +165,8 @@ async function renderRegistries() {
   const list = await invoke("registry_list");
   const box = $("registry-list");
   box.innerHTML = list.length
-    ? list.map(s => `<div class="pitem"><span class="pname">🔑 ${esc(s)}</span><span class="pdetail"></span>
-        <button data-rg="${esc(s)}" class="danger">🗑</button></div>`).join("")
+    ? list.map(s => `<div class="pitem"><span class="pname">${ic("key")} ${esc(s)}</span><span class="pdetail"></span>
+        <button data-rg="${esc(s)}" class="danger">${ic("trash")}</button></div>`).join("")
     : `<div class="hint">${t("reg.empty")}</div>`;
   box.querySelectorAll("button[data-rg]").forEach(b => b.onclick = async () => {
     await invoke("registry_delete", { server: b.dataset.rg });
@@ -208,7 +208,7 @@ async function openJournal() {
   try {
     journalData = await invoke("journal_list", { limit: 800 });
     renderJournal();
-  } catch (e) { box.innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`; }
+  } catch (e) { box.innerHTML = errorBox(e); }
 }
 
 function renderJournal() {
@@ -224,30 +224,87 @@ function renderJournal() {
       <tr>
         <td class="mono">${new Date(e.ts * 1000).toLocaleString()}</td>
         <td>${esc(nameOf(e.conn))}</td>
-        <td><span style="color:${e.ok ? "var(--text)" : "var(--red)"}">${e.ok ? "" : "✗ "}${esc(e.action)}</span></td>
+        <td><span style="color:${e.ok ? "var(--text)" : "var(--red)"}">${e.ok ? "" : ic("x", "sm")} ${esc(e.action)}</span></td>
         <td class="mono">${esc(e.target)}</td>
         <td class="grow hint">${esc((e.detail || "").slice(0, 120))}</td>
       </tr>`).join("")}</tbody></table>`;
 }
 
 /* ═══ 7. Telegram ═══ */
+/** Загальні налаштування: усе, що раніше було зашите в код. */
+function syncGeneralSettings() {
+  $("cfg-poll").value = String(S.cfg.pollFast);
+  $("cfg-bgmon").value = String(S.cfg.bgMonitor);
+  $("cfg-logbuf").value = String(S.cfg.logBuffer);
+  $("cfg-shell").value = S.cfg.defaultShell;
+  $("cfg-confirm").checked = S.cfg.confirmDestructive;
+  $("cfg-dock").checked = S.cfg.editorDock;
+  $("cfg-upd").checked = S.cfg.checkUpdates;
+  $("cfg-demo").checked = localStorage.getItem("prystan-demo") === "1";
+  $("cfg-upd-state").textContent = S.update
+    ? (S.update.newer ? t("upd.available", { v: S.update.latest }) : t("upd.latest", { v: S.update.current }))
+    : "";
+}
+
+function wireGeneralSettings() {
+  $("cfg-poll").onchange = e => { S.cfg.pollFast = +e.target.value; persist(); armPolling(); };
+  $("cfg-bgmon").onchange = e => { S.cfg.bgMonitor = +e.target.value; persist(); syncMonitor(); };
+  $("cfg-logbuf").onchange = e => { S.cfg.logBuffer = +e.target.value; persist(); };
+  $("cfg-shell").onchange = e => {
+    S.cfg.defaultShell = e.target.value;
+    $("term-shell").value = e.target.value;
+    persist();
+  };
+  $("cfg-confirm").onchange = e => { S.cfg.confirmDestructive = e.target.checked; persist(); };
+  $("cfg-dock").onchange = e => setEditorDock(e.target.checked);
+  $("cfg-upd").onchange = e => { S.cfg.checkUpdates = e.target.checked; persist(); };
+  // підміна транспорту робиться на старті, тож перемикач вимагає перезавантаження
+  $("cfg-demo").onchange = e => {
+    localStorage.setItem("prystan-demo", e.target.checked ? "1" : "0");
+    location.reload();
+  };
+  $("cfg-check-now").onclick = async () => {
+    $("cfg-upd-state").innerHTML = `<span class="spin"></span>`;
+    await checkUpdate(true);
+    syncGeneralSettings();
+  };
+}
+
 async function openSettings() {
+  syncGeneralSettings();
   const st = await invoke("tg_status");
   $("tg-chat").value = st.chat_id || "";
   $("tg-token").value = "";
   $("tg-token").placeholder = st.configured ? "•••••• (" + t("set.saved") + ")" : "123456:AA...";
   $("tg-state").textContent = st.configured ? "✓ " + t("set.saved") : t("set.notSet");
   $("tg-on-alerts").checked = !!S.tgAlerts;
+  syncEventChecks();
   $("settings-modal").classList.add("open");
 }
 
-/** Надіслати алерт у Telegram, якщо увімкнено. */
-function tgAlert(text) {
+/** Які саме події слати — кожна вмикається окремо. */
+function syncEventChecks() {
+  $("tg-events").querySelectorAll("label[data-ev]").forEach(l => {
+    const inp = l.querySelector("input");
+    inp.checked = !!S.tgEvents[l.dataset.ev];
+    inp.disabled = !S.tgAlerts;
+    l.style.opacity = S.tgAlerts ? "1" : ".45";
+  });
+}
+
+/**
+ * Надіслати алерт у Telegram.
+ * @param {string} text
+ * @param {string} kind — тип події; мовчимо, якщо його вимкнено в налаштуваннях
+ */
+function tgAlert(text, kind = null) {
   if (!S.tgAlerts) return;
+  if (kind && !S.tgEvents[kind]) return;
   invoke("tg_send", { text }).catch(() => {});
 }
 
 function wireExtras() {
+  wireGeneralSettings();
   /* diff + ліміти живуть усередині Inspect — обробники вішаються там */
   $("scan-filter").oninput = renderScanTable;
   $("scan-sev").querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -296,5 +353,32 @@ function wireExtras() {
     try { await invoke("tg_forget"); $("tg-state").textContent = t("set.notSet"); $("tg-chat").value = ""; }
     catch (e) { toast("telegram: " + e); }
   };
-  $("tg-on-alerts").onchange = e => { S.tgAlerts = e.target.checked; persist(); };
+  $("tg-on-alerts").onchange = e => { S.tgAlerts = e.target.checked; persist(); syncEventChecks(); };
+  $("tg-events").querySelectorAll("label[data-ev]").forEach(l => {
+    l.querySelector("input").onchange = e => {
+      S.tgEvents[l.dataset.ev] = e.target.checked;
+      persist();
+    };
+  });
+
+  /* Шукати chat_id вручну — марудно й помилконебезпечно. Простіше:
+     користувач пише боту будь-що, а ми забираємо чат із getUpdates. */
+  $("tg-detect").onclick = async () => {
+    const token = $("tg-token").value.trim();
+    if (!token) return toast(t("set.detectNeedToken"), "warn", 5000);
+    const state = $("tg-detect-state");
+    state.style.display = "block";
+    state.innerHTML = `<span class="spin"></span> ${esc(t("set.detectWaiting"))}`;
+    $("tg-detect").disabled = true;
+    try {
+      const r = await invoke("tg_detect_chat", { token });
+      $("tg-chat").value = r.chat_id;
+      state.textContent = `✓ ${r.title || r.chat_id} → ${r.chat_id}`;
+      toast(t("set.detectFound", { chat: r.title || r.chat_id }), "ok", 5000);
+    } catch (e) {
+      state.textContent = String(e);
+    } finally {
+      $("tg-detect").disabled = false;
+    }
+  };
 }

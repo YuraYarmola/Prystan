@@ -1,7 +1,7 @@
 "use strict";
 /* Логи: стрім контейнера, агреговані логи стека, фільтри рівнів, глибокий пошук */
 
-const MAX_LOG_NODES = 8000;
+const maxLogNodes = () => S.cfg.logBuffer || 8000;
 let following = true;
 let matchTotal = 0;
 
@@ -60,10 +60,17 @@ function resetLogs(msg) {
   S.logLines = S.errCount = S.warnCount = 0;
   S.logBlock = null;
   S.logCarry = "";
+  logQueue.length = 0;
   updateLevelCounts();
   following = true;
-  $("log-follow").textContent = "⏸";
+  setFollowIcon();
   $("logs").classList.toggle("nowrap", !S.logWrap);
+}
+
+function setFollowIcon() {
+  const b = $("log-follow");
+  b.dataset.icon = following ? "pause" : "play";
+  applyIcons(b.parentElement ?? document);
 }
 
 /* Потік приходить довільними шматками — збираємо повні рядки,
@@ -130,8 +137,43 @@ listen("docker-log-multi", ev => {
   feedLog(p.line, { label: p.label, color: p.color, svcKey: p.label });
 });
 
+/* Рядки не вставляємо по одному: контейнер із довгою історією віддає їх
+   тисячами, і кожен окремий appendChild + scrollTop коштував секунд прокрутки.
+   Складаємо все в чергу й раз на кадр додаємо одним фрагментом — уже з кінця. */
+const logQueue = [];
+let flushScheduled = false;
+
 function appendLog(text, opts = {}) {
+  logQueue.push([text, opts]);
+  if (flushScheduled) return;
+  flushScheduled = true;
+  requestAnimationFrame(flushLogs);
+}
+
+function flushLogs() {
+  flushScheduled = false;
+  if (!logQueue.length) return;
   const logs = $("logs");
+  // якщо прилетіла історія більша за буфер — показуємо саме хвіст
+  const cap = maxLogNodes();
+  if (logQueue.length > cap) logQueue.splice(0, logQueue.length - cap);
+  const frag = document.createDocumentFragment();
+  for (const [text, opts] of logQueue) frag.appendChild(buildLogNode(text, opts));
+  S.logLines += logQueue.length;
+  logQueue.length = 0;
+  logs.appendChild(frag);
+  while (logs.childNodes.length > cap) logs.removeChild(logs.firstChild);
+  updateLevelCounts();
+  if (following) {
+    // власна прокрутка не повинна виглядати як «користувач гортає вгору»
+    autoScroll = true;
+    logs.scrollTop = logs.scrollHeight;
+    requestAnimationFrame(() => { autoScroll = false; });
+  }
+}
+let autoScroll = false;
+
+function buildLogNode(text, opts = {}) {
   const span = document.createElement("span");
   if (opts.meta) {
     span.className = "meta-line";
@@ -156,12 +198,8 @@ function appendLog(text, opts = {}) {
     if (lvl === "warn") { span.classList.add("lvl-warn"); if (start) S.warnCount++; }
     if (lvl === "dbg") span.classList.add("lvl-dbg");
     applyFiltersTo(span);
-    if (S.logLines % 25 === 0) updateLevelCounts();
   }
-  logs.appendChild(span);
-  S.logLines++;
-  while (logs.childNodes.length > MAX_LOG_NODES) logs.removeChild(logs.firstChild);
-  if (following) logs.scrollTop = logs.scrollHeight;
+  return span;
 }
 
 function updateLevelCounts() {
@@ -281,6 +319,29 @@ async function runDeepSearch() {
   }
 }
 
+/**
+ * Уся помилка цілком — від рядка, що відкрив блок, до кінця traceback.
+ * Межі блоку вже пораховані при розборі логу, тож копіювати мишею 40 рядків
+ * більше не треба.
+ * @returns {string} порожній рядок, якщо клікнули не по помилці
+ */
+function errorBlockAt(node) {
+  const lvl = node.dataset.lvl;
+  if (lvl !== "err" && lvl !== "warn") return "";
+  let start = node;
+  while (start && !start.dataset.blockStart) {
+    const prev = start.previousElementSibling;
+    if (!prev || prev.dataset.lvl !== lvl) break;
+    start = prev;
+  }
+  const out = [];
+  for (let n = start; n; n = n.nextElementSibling) {
+    if (n !== start && (n.dataset.blockStart || n.dataset.lvl !== lvl)) break;
+    out.push(n.dataset.raw ?? n.textContent);
+  }
+  return out.join("").trimEnd();
+}
+
 function wireLogsUI() {
   $("log-search").oninput = applyFiltersAll;
   $("log-level").querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -294,7 +355,7 @@ function wireLogsUI() {
   };
   $("log-follow").onclick = () => {
     following = !following;
-    $("log-follow").textContent = following ? "⏸" : "▶";
+    setFollowIcon();
     if (following) $("logs").scrollTop = $("logs").scrollHeight;
   };
   $("log-wrap").onclick = () => {
@@ -314,10 +375,32 @@ function wireLogsUI() {
   $("log-deep").onclick = openDeepSearch;
   $("deep-go").onclick = runDeepSearch;
   $("deep-q").onkeydown = e => { if (e.key === "Enter") runDeepSearch(); };
+  /* У логах найчастіше потрібно саме скопіювати — рядок або весь буфер. */
+  $("logs").addEventListener("contextmenu", e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const sel = String(window.getSelection?.() ?? "").trim();
+    const node = e.target instanceof Element ? e.target.closest("#logs > span") : null;
+    const line = node?.dataset?.raw ?? node?.textContent ?? "";
+    const all = () => [...$("logs").childNodes].map(n => n.dataset?.raw ?? n.textContent).join("");
+    const block = node ? errorBlockAt(node) : "";
+    showContextMenu(e.clientX, e.clientY, [
+      { icon: "copy", label: t("ctx.copy"), hint: "Ctrl+C", disabled: !sel, run: () => copyText(sel) },
+      { icon: "file", label: t("ctx.copyLine"), disabled: !line, run: () => copyText(line.trimEnd()) },
+      { icon: "alert", label: t("ctx.copyBlock"), disabled: !block, run: () => copyText(block) },
+      { icon: "clipboard", label: t("ctx.copyAll"), run: () => copyText(all()) },
+      "-",
+      { icon: "search", label: t("logs.deep"), run: openDeepSearch },
+      { icon: "download", label: t("logs.export"), run: () => $("log-export").click() },
+      { icon: "eraser", label: t("logs.clear"), run: () => resetLogs("") },
+    ]);
+  });
+
   $("logs").onscroll = () => {
+    if (autoScroll) return;
     const el = $("logs");
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-    if (!atBottom && following) { following = false; $("log-follow").textContent = "▶"; }
+    if (!atBottom && following) { following = false; setFollowIcon(); }
   };
 }
 

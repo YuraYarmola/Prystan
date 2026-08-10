@@ -1,22 +1,27 @@
 "use strict";
 /* Сервер: live-монітор, процеси, дашборд усіх серверів */
 
+/**
+ * Монітори всіх підключених SSH-серверів.
+ * Відкритий сервер опитуємо часто, решту — рідко: пороги CPU/RAM/диска мають
+ * спрацьовувати й тоді, коли ви дивитесь зовсім в інше місце, інакше алерти
+ * ловлять лише те, що ви й так бачите на екрані.
+ */
 function syncMonitor() {
-  const want = (S.view === "server" || S.view === "dash") ? S.activeConn : null;
-  if (S.monActive && S.monActive !== want) {
-    invoke("host_monitor_stop", { conn: S.monActive }).catch(() => {});
-    S.monActive = null;
-  }
-  if (want && S.monActive !== want && activeProfile()?.kind === "ssh") {
-    S.monActive = want;
-    invoke("host_monitor_start", { conn: want }).catch(e => toast("Монітор: " + e));
-  }
-  // дашборд: тримаємо монітори всіх підключених ssh-серверів
-  if (S.view === "dash") {
-    for (const p of S.profiles) {
-      if (p.kind === "ssh" && S.conns[p.id]?.up) invoke("host_monitor_start", { conn: p.id }).catch(() => {});
+  const focused = (S.view === "server" || S.view === "dash") ? S.activeConn : null;
+  const bg = S.cfg.bgMonitor;
+  for (const p of S.profiles) {
+    if (p.kind !== "ssh") continue;
+    const up = S.conns[p.id]?.up;
+    const fast = S.view === "dash" || p.id === focused;
+    if (!up || (!fast && !bg)) {
+      if (S.mon[p.id]) { invoke("host_monitor_stop", { conn: p.id }).catch(() => {}); delete S.mon[p.id]; }
+      continue;
     }
+    invoke("host_monitor_start", { conn: p.id, interval: fast ? 3 : bg })
+      .catch(e => { if (fast) toast("Монітор: " + e); });
   }
+  S.monActive = focused;
 }
 
 function meter(pct) {
@@ -102,7 +107,7 @@ function renderProc() {
         <td style="text-align:right">${p.mem.toFixed(1)}%</td>
         <td style="text-align:right">${fmtBytes(p.rss)}</td>
         <td class="grow mono" style="font-size:11px">${esc(p.cmd.slice(0, 140))}</td>
-        <td><div class="racts"><button data-pid="${p.pid}" class="danger" title="kill">✕</button></div></td>
+        <td><div class="racts"><button data-pid="${p.pid}" class="danger" title="kill">${ic("x")}</button></div></td>
       </tr>`).join("");
   $("proc-table").innerHTML = `<table class="grid">
     <thead><tr><th>PID</th><th>USER</th><th style="text-align:right">CPU</th><th style="text-align:right">MEM</th><th style="text-align:right">RSS</th><th>${t("srv.cmd")}</th><th style="width:40px"></th></tr></thead>
@@ -120,6 +125,88 @@ function renderProc() {
     try { await invoke("host_kill", { conn: S.activeConn, pid, signal: b.dataset.killed ? "KILL" : "TERM" }); b.dataset.killed = "1"; }
     catch (e) { toast("kill: " + e); }
   });
+}
+
+/* ═══ аналіз використання диска по теках ═══
+   `df` каже, що диск повний, але не каже, чим саме. Тут — один рівень
+   углиб із розмірами й смужками; у теку можна провалитись і копати далі. */
+
+const duKey = () => (S.view === "project" ? "@proj:" + (S.project?.id ?? "") : S.activeConn);
+const duConn = () => (S.view === "project" ? "local" : S.activeConn);
+const duRoot = () => (S.view === "project" ? (S.project?.path ?? "/") : "/");
+const duPath = () => S.duPath[duKey()] ?? duRoot();
+
+/** Перейти до аналізу конкретної теки (з файлового менеджера чи меню). */
+function gotoDu(path) {
+  S.duPath[duKey()] = path;
+  if (S.view === "project") S.projTab = "du";
+  else { S.view = "server"; S.srvTab = "du"; }
+  renderTree();
+  renderDetail();
+}
+
+function openDu() {
+  const cached = S.duData[duKey() + "|" + duPath()];
+  $("du-path").value = duPath();
+  if (cached) renderDu(cached);
+  else runDu();
+}
+
+async function runDu() {
+  const path = duPath();
+  const conn = duConn();
+  const key = duKey();
+  $("du-path").value = path;
+  $("du-total").textContent = "";
+  $("du-body").innerHTML = loadingBox(t("du.scanning"));
+  setBusy(true);
+  try {
+    const d = await invoke("host_du", { conn, path });
+    S.duData[key + "|" + path] = d;
+    if (duKey() !== key || duPath() !== path) return;   // користувач уже пішов далі
+    renderDu(d);
+  } catch (e) {
+    $("du-body").innerHTML = errorBox(e);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderDu(d) {
+  const max = d.entries.reduce((a, e) => Math.max(a, e.size), 0) || 1;
+  const sum = d.entries.reduce((a, e) => a + e.size, 0);
+  const total = d.total || sum || 1;
+  $("du-total").textContent = `${t("du.total")}: ${fmtBytes(d.total || sum)}` +
+    (d.partial ? " · " + t("du.partial") : "");
+  if (!d.entries.length) {
+    $("du-body").innerHTML = `<div class="placeholder">${t("files.empty")}</div>`;
+    return;
+  }
+  $("du-body").innerHTML = d.entries.slice(0, 300).map(e => `
+    <div class="durow ${e.is_dir ? "dir" : ""}" data-path="${esc(e.path)}" data-dir="${e.is_dir}">
+      <span class="dn">${ic(e.is_dir ? "folder" : "file")}<span>${esc(e.name)}</span></span>
+      <span class="dsize">${fmtBytes(e.size)}</span>
+      <span class="dpct">${(e.size / total * 100).toFixed(1)}%</span>
+      <span class="dbar"><i style="width:${(e.size / max * 100).toFixed(1)}%"></i></span>
+    </div>`).join("");
+  $("du-body").querySelectorAll(".durow.dir").forEach(el => el.onclick = () => {
+    S.duPath[duKey()] = el.dataset.path;
+    openDu();
+  });
+}
+
+function wireDuUI() {
+  $("du-go").onclick = () => {
+    S.duPath[duKey()] = $("du-path").value.trim() || duRoot();
+    runDu();
+  };
+  $("du-up").onclick = () => {
+    const p = duPath();
+    if (p === duRoot()) return;
+    S.duPath[duKey()] = parentPath(p);
+    openDu();
+  };
+  $("du-path").onkeydown = e => { if (e.key === "Enter") $("du-go").click(); };
 }
 
 /* C5 — дашборд усіх серверів */
@@ -159,7 +246,7 @@ function renderDash() {
     const diskPct = disk && disk.size ? disk.used / disk.size * 100 : 0;
     const worst = Math.max(d.cpu_pct, memPct, diskPct);
     return `<div class="statcard clickable" data-conn="${esc(p.id)}" style="${worst > 90 ? "border-color:var(--red)" : worst > 75 ? "border-color:var(--yellow)" : ""}">
-      <div class="sc-label">${esc(p.name)} <span class="cdot up"></span>${p.readonly ? " 🔒" : ""}</div>
+      <div class="sc-label">${esc(p.name)} <span class="cdot up"></span>${p.readonly ? ic("lock", "sm") : ""}</div>
       <div class="sc-value" style="font-size:15px">${esc(d.hostname)}</div>
       <div class="sc-sub">CPU ${d.cpu_pct < 0 ? "…" : d.cpu_pct.toFixed(0) + "%"} · RAM ${memPct.toFixed(0)}% · ${t("srv.disk")} ${diskPct.toFixed(0)}%</div>
       ${meter(Math.max(0, d.cpu_pct))}
@@ -186,8 +273,8 @@ function checkAlerts(conn, d) {
     const k = conn + ":" + key;
     if (alerted[k] && Date.now() - alerted[k] < 10 * 60 * 1000) return;
     alerted[k] = Date.now();
-    toast(`⚠ ${p.name}: ${msg}`, "warn", 9000);
-    tgAlert(`⚠ <b>${p.name}</b>\n${msg}`);
+    toast(`${p.name}: ${msg}`, "warn", 9000);
+    tgAlert(`⚠ <b>${p.name}</b>\n${msg}`, "thresholds");
   };
   const memPct = d.mem_total ? (d.mem_total - d.mem_avail) / d.mem_total * 100 : 0;
   if (memPct > 92) fire("mem", `пам'ять ${memPct.toFixed(0)}%`);
@@ -212,7 +299,7 @@ listen("host-monitor", ev => {
   if (S.srvTab === "stats") renderSrvStats(p);
   if (S.srvTab === "proc") {
     parseProc(p); renderProc();
-    $("proc-updated").textContent = "🔴 live · " + new Date().toLocaleTimeString();
+    $("proc-updated").innerHTML = `<span class="livedot"></span> live · ${new Date().toLocaleTimeString()}`;
   }
 });
 listen("host-monitor-closed", ev => {

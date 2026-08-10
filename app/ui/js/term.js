@@ -104,8 +104,8 @@ async function tabComplete(sess) {
 
   let entries;
   try {
-    entries = isHostView()
-      ? await invoke("host_fs_list", { conn: S.activeConn, path: dir })
+    entries = isFsHost()
+      ? await invoke("host_fs_list", { conn: fsConn(), path: dir })
       : await invoke("fs_list", { conn: S.activeConn, id: S.selected.id, path: dir });
   } catch (e) { return; }
 
@@ -125,6 +125,18 @@ async function tabComplete(sess) {
   }
 }
 
+/** Вставка з меню. Якщо читати буфер не дозволено — підказуємо Ctrl+V. */
+async function pasteIntoTerm(sess) {
+  const txt = await readClipboard();
+  if (txt === null) {
+    sess.term.focus();
+    toast(t("term.pasteHint"), "warn", 5000);
+    return;
+  }
+  if (txt) sess.term.paste(txt);
+  sess.term.focus();
+}
+
 function termTheme() {
   const light = S.theme === "light";
   return light
@@ -139,12 +151,15 @@ const activeSess = () => {
   return list[S.termActive[targetKey()] ?? 0] ?? list[0];
 };
 
+/** Куди відкривати консоль: у контейнер, на сервер по SSH чи локально в теці. */
+const termMode = () => (S.view === "project" ? "local" : isHostView() ? "host" : "container");
+
 async function openTerm() {
   const key = targetKey();
   const list = termList(key);
   if (!list.length) await newTermSession();
   else showSess(S.termActive[key] ?? 0);
-  $("term-shell").style.display = isHostView() ? "none" : "";
+  $("term-shell").style.display = termMode() === "container" ? "" : "none";
   renderTermTabs();
 }
 
@@ -170,9 +185,10 @@ function renderTermTabs() {
   list.forEach((s, i) => {
     const el = document.createElement("div");
     el.className = "ttab" + (i === (S.termActive[key] ?? 0) ? " on" : "");
-    el.innerHTML = `<span>${s.dead ? "✖ " : ""}${esc(s.title)}</span><span class="cl" title="${esc(t("editor.close"))}">✕</span>`;
+    el.innerHTML = `${s.dead ? ic("x", "sm") : ""}<span>${esc(s.title)}</span>` +
+      `<span class="cl" title="${esc(t("editor.close"))}">${ic("x", "sm")}</span>`;
     el.onclick = e => {
-      if (e.target.classList.contains("cl")) { closeSess(i); return; }
+      if (e.target.closest(".cl")) { closeSess(i); return; }
       showSess(i);
     };
     box.appendChild(el);
@@ -202,7 +218,9 @@ function doResize(sess) {
 
 async function newTermSession() {
   const key = targetKey();
-  const host = isHostView();
+  const mode = termMode();
+  // локальна консоль і ssh обидві живуть у ConPTY — команди в них спільні
+  const host = mode !== "container";
   const list = termList(key);
   if (list.length >= 6) return toast(t("term.maxSessions"), "warn", 3000);
 
@@ -224,7 +242,9 @@ async function newTermSession() {
 
   let sid;
   try {
-    if (host) {
+    if (mode === "local") {
+      sid = await invoke("local_term_open", { cwd: curPath(), cols: term.cols, rows: term.rows });
+    } else if (host) {
       sid = await invoke("host_term_open", { conn: S.activeConn, cols: term.cols, rows: term.rows });
     } else {
       sid = await invoke("term_open", { conn: S.activeConn, id: S.selected.id, shell: $("term-shell").value });
@@ -238,23 +258,26 @@ async function newTermSession() {
     } else { toast("Термінал: " + e); term.dispose(); div.remove(); return null; }
   }
 
-  const usedShell = host ? "/bin/bash" : $("term-shell").value;
+  const usedShell = mode === "container" ? $("term-shell").value : "/bin/bash";
+  const titles = { local: t("proj.localShell"), host: "ssh", container: usedShell.split("/").pop() };
   const sess = {
-    sid, term, fit, search, div, host, dead: false,
-    title: host ? `ssh ${list.length + 1}` : `${usedShell.split("/").pop()} ${list.length + 1}`,
+    sid, term, fit, search, div, host, mode, dead: false,
+    title: `${titles[mode]} ${list.length + 1}`,
     lastCmd: "",
-    // bash/zsh мають власне доповнення; для решти робимо своє
-    nativeComplete: /bash|zsh/.test(usedShell),
+    // bash/zsh і PowerShell доповнюють самі; для решти робимо своє
+    nativeComplete: mode === "local" || /bash|zsh/.test(usedShell),
     cwd: "/",
     cwdKnown: true,
   };
   list.push(sess);
 
   // exec стартує в WorkingDir образу — беремо його, щоб відносні шляхи доповнювались правильно
-  if (!host) {
+  if (mode === "container") {
     invoke("inspect_container", { conn: S.activeConn, id: S.selected.id })
       .then(j => { sess.cwd = j?.Config?.WorkingDir || "/"; })
       .catch(() => {});
+  } else if (mode === "local") {
+    sess.cwd = curPath();
   } else {
     sess.cwd = "/root";
   }
@@ -337,26 +360,41 @@ async function newTermSession() {
     setTimeout(showGhost, 40);
   });
 
+  /* ── копіювання та вставка ──
+     xterm припиняє обробку клавіші лише якщо обробник повернув false — і саме
+     тоді НЕ гасить подію. Тому Ctrl+V ми просто віддаємо браузеру: його власна
+     вставка не потребує жодних дозволів, а xterm ловить подію paste сам.
+     Ctrl+C копіює тільки коли є виділення: без нього це сигнал перервати. */
   term.attachCustomKeyEventHandler(ev => {
     if (ev.type !== "keydown") return true;
     // Tab не повинен переводити фокус з терміналу — віддаємо його shell
     if (ev.key === "Tab") { ev.preventDefault(); return true; }
-    if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyC") {
+    if (ev.ctrlKey && ev.code === "KeyV") return false;          // нативна вставка
+    if (ev.ctrlKey && ev.code === "KeyC") {
       const sel = term.getSelection();
-      if (sel) navigator.clipboard.writeText(sel);
+      if (!sel) return true;                                      // ^C у shell
+      copyText(sel, true);
+      term.clearSelection();
       return false;
     }
-    if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyV") {
-      navigator.clipboard.readText().then(txt => txt && term.paste(txt));
-      return false;
-    }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === "KeyA") { term.selectAll(); return false; }
     return true;
   });
-  div.addEventListener("contextmenu", async e => {
+
+  div.addEventListener("contextmenu", e => {
     e.preventDefault();
+    e.stopPropagation();
     const sel = term.getSelection();
-    if (sel) { await navigator.clipboard.writeText(sel); term.clearSelection(); }
-    else { const txt = await navigator.clipboard.readText(); if (txt) term.paste(txt); }
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        icon: "copy", label: t("ctx.copy"), hint: "Ctrl+C", disabled: !sel,
+        run: () => { copyText(sel); term.clearSelection(); },
+      },
+      { icon: "clipboard", label: t("ctx.paste"), hint: "Ctrl+V", run: () => pasteIntoTerm(sess) },
+      "-",
+      { icon: "list", label: t("ctx.selectAll"), hint: "Ctrl+Shift+A", run: () => term.selectAll() },
+      { icon: "eraser", label: t("ctx.clearScreen"), run: () => term.clear() },
+    ]);
   });
 
   if (!S._termRO) {
@@ -381,7 +419,9 @@ listen("term-closed", ev => {
     const s = list.find(x => x.sid === ev.payload.sid);
     if (!s) continue;
     s.dead = true;
-    const onTermTab = (S.view === "container" && S.tab === "term") || (S.view === "server" && S.srvTab === "term");
+    const onTermTab = (S.view === "container" && S.tab === "term") ||
+      (S.view === "server" && S.srvTab === "term") ||
+      (S.view === "project" && S.projTab === "term");
     if (key === targetKey() && onTermTab && activeSess() === s) $("term-overlay").style.display = "flex";
     renderTermTabs();
     return;
@@ -406,6 +446,7 @@ function wireTermUI() {
     const s = activeSess();
     if (s && e.key === "Enter") s.search.findNext($("term-search").value);
   };
+  $("term-shell").value = S.cfg.defaultShell;
   renderSnippets();
   $("term-snippets").onchange = e => {
     const cmd = e.target.value;

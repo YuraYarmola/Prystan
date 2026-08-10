@@ -2,16 +2,17 @@
 /* Образи, томи, мережі, disk usage, create, build, compose, inspect */
 
 function renderImages() {
+  if (S.loading && !S.images.length) { $("images-table").innerHTML = skeleton(6); return; }
   const rows = [...S.images].sort((a, b) => b.created - a.created).map(i => `
     <tr>
       <td class="grow">${i.tags.length ? i.tags.map(esc).join("<br>") : `<span class="mono">${esc(i.id.replace("sha256:", "").slice(0, 12))}</span> <span class="hint">&lt;none&gt;</span>`}</td>
       <td style="text-align:right">${fmtBytes(i.size)}</td>
       <td>${fmtAgo(i.created)}</td>
       <td><div class="racts">
-        <button data-act="layers" data-id="${esc(i.id)}" title="${esc(t("img.layers"))}">📦</button>
-        <button data-act="scan" data-id="${esc(i.id)}" title="${esc(t("scan.title"))}">🛡</button>
-        <button data-act="push" data-id="${esc(i.id)}" title="${esc(t("img.push"))}">⇧</button>
-        <button data-act="rm" data-id="${esc(i.id)}" class="danger">🗑</button>
+        <button data-act="layers" data-id="${esc(i.id)}" title="${esc(t("img.layers"))}">${ic("layers")}</button>
+        <button data-act="scan" data-id="${esc(i.id)}" title="${esc(t("scan.title"))}">${ic("shield")}</button>
+        <button data-act="push" data-id="${esc(i.id)}" title="${esc(t("img.push"))}">${ic("upload")}</button>
+        <button data-act="rm" data-id="${esc(i.id)}" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>
       </div></td>
     </tr>`).join("");
   $("images-table").innerHTML = `<table class="grid">
@@ -31,12 +32,13 @@ function renderImages() {
 }
 
 function renderVolumes() {
+  if (S.loading && !S.volumes.length) { $("volumes-table").innerHTML = skeleton(5); return; }
   const rows = S.volumes.map(v => `
     <tr>
       <td class="grow">${esc(v.name)}</td>
       <td>${esc(v.driver)}</td>
       <td class="mono grow">${esc(v.mountpoint)}</td>
-      <td><div class="racts"><button data-n="${esc(v.name)}" class="danger">🗑</button></div></td>
+      <td><div class="racts"><button data-n="${esc(v.name)}" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button></div></td>
     </tr>`).join("");
   $("volumes-table").innerHTML = `<table class="grid">
     <thead><tr><th>${t("files.name")}</th><th>${t("res.driver")}</th><th>${t("res.mountpoint")}</th><th style="width:60px"></th></tr></thead>
@@ -50,12 +52,13 @@ function renderVolumes() {
 }
 
 function renderNetworks() {
+  if (S.loading && !S.networks.length) { $("networks-table").innerHTML = skeleton(5); return; }
   const rows = S.networks.map(n => `
     <tr>
       <td class="grow">${esc(n.name)}</td>
       <td>${esc(n.driver)}</td>
       <td>${esc(n.scope)}</td>
-      <td><div class="racts">${["bridge", "host", "none"].includes(n.name) ? "" : `<button data-id="${esc(n.id)}" class="danger">🗑</button>`}</div></td>
+      <td><div class="racts">${["bridge", "host", "none"].includes(n.name) ? "" : `<button data-id="${esc(n.id)}" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>`}</div></td>
     </tr>`).join("");
   $("networks-table").innerHTML = `<table class="grid">
     <thead><tr><th>${t("files.name")}</th><th>${t("res.driver")}</th><th>${t("res.scope")}</th><th style="width:60px"></th></tr></thead>
@@ -97,7 +100,7 @@ async function openDf() {
       </div>`;
     box.querySelectorAll("button[data-p]").forEach(b => b.onclick = () => pruneWhat(b.dataset.p, b.textContent));
   } catch (e) {
-    box.innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`;
+    box.innerHTML = errorBox(e);
   }
 }
 
@@ -227,10 +230,10 @@ function openComposePane() {
   const wd = st.rows.find(r => r.workdir)?.workdir ?? "";
   const cfg = (st.rows.find(r => r.config_file)?.config_file ?? "").split(",")[0];
   const prof = activeProfile();
-  S.composeCtx = { project: st.project, workdir: wd, config: cfg, kind: prof.kind };
+  S.composeCtx = { conn: S.activeConn, project: st.project, workdir: wd, config: cfg, kind: prof.kind };
   $("cm-workdir").textContent = wd ? `${t("compose.workdir")}: ${wd}` : t("compose.noWorkdir");
   const enabled = (prof.kind === "ssh" || prof.kind === "local") && !!wd && !isReadonly();
-  ["cm-up", "cm-down", "cm-restart", "cm-pull"].forEach(id => $(id).disabled = !enabled);
+  ["cm-up", "cm-down", "cm-restart", "cm-pull", "cm-build"].forEach(id => $(id).disabled = !enabled);
   $("cm-edit-compose").disabled = !cfg || prof.kind === "tcp";
   $("cm-edit-env").disabled = !wd || prof.kind === "tcp";
 }
@@ -246,31 +249,38 @@ async function composeRun(action) {
   const out = $("cm-output");
   out.style.display = "block";
   out.textContent = "";
+  setBusy(true);
   try {
-    await invoke("compose_cmd", { conn: S.activeConn, project: ctx.project, workdir: ctx.workdir, action });
-  } catch (e) { out.textContent += "✗ " + e + "\n"; }
+    await invoke("compose_cmd", { conn: ctx.conn ?? S.activeConn, project: ctx.project, workdir: ctx.workdir, action });
+  } catch (e) { out.textContent += "✗ " + e + "\n"; setBusy(false); }
 }
 
 listen("compose-output", ev => {
   const p = ev.payload;
-  if (p.conn !== S.activeConn || p.project !== S.composeCtx?.project) return;
+  const ctx = S.composeCtx;
+  if (!ctx || p.conn !== (ctx.conn ?? S.activeConn) || p.project !== ctx.project) return;
   const out = $("cm-output");
   out.style.display = "block";
   out.textContent += p.line + "\n";
   out.scrollTop = out.scrollHeight;
-  if (p.done) refreshAll();
+  if (p.done) {
+    setBusy(false);
+    refreshAll({ quiet: true });
+    const ok = !p.line.startsWith("✗");
+    tgAlert(`${ok ? "✅" : "⚠"} <b>${ctx.project}</b>\ncompose: ${esc(p.line)}`, "composeDone");
+  }
 });
 
 function wireCompose() {
   $("cm-up").onclick = () => composeRun("up");
+  $("cm-build").onclick = () => composeRun("build");
   $("cm-down").onclick = () => composeRun("down");
   $("cm-restart").onclick = () => composeRun("restart");
   $("cm-pull").onclick = () => composeRun("pull");
   $("cm-edit-compose").onclick = () => openEditor(S.composeCtx.config, "host");
   $("cm-edit-env").onclick = () => {
     const ctx = S.composeCtx;
-    const sep = ctx.kind === "local" ? "\\" : "/";
-    openEditor(ctx.workdir.replace(/[\\/]+$/, "") + sep + ".env", "host");
+    openEditor(ctx.workdir.replace(/[\\/]+$/, "") + "/.env", "host");
   };
 }
 
@@ -330,7 +340,7 @@ async function openInspect() {
       <h3>${t("insp.networks")}</h3><span>${nets.map(esc).join(", ") || "—"}</span>
       <h3>
         ${t("insp.env")} (${envOriginal.length})
-        <button id="env-mask" style="font-size:11px;padding:2px 8px" title="${esc(t("insp.envMask"))}">👁</button>
+        <button id="env-mask" style="font-size:11px;padding:2px 8px" title="${esc(t("insp.envMask"))}">${ic("eye")}</button>
         <button id="env-edit" style="font-size:11px;padding:2px 8px">${t("insp.envEdit")}</button>
         <span id="env-actions" style="display:none">
           <button id="env-apply" class="primary" style="font-size:11px;padding:2px 8px">${t("insp.envApply")}</button>
@@ -368,13 +378,13 @@ async function openInspect() {
     };
     $("env-mask").onclick = () => {
       envMasked = !envMasked;
-      $("env-mask").textContent = envMasked ? "👁" : "🙈";
+      $("env-mask").innerHTML = ic(envMasked ? "eye" : "eyeOff");
       if (!envEditing) $("env-view").textContent = envOriginal.map(maskValue).join("\n");
     };
     $("env-edit").onclick = () => startEnvEdit();
     $("env-cancel").onclick = () => cancelEnvEdit();
     $("env-apply").onclick = () => applyEnvEdit();
-  } catch (e) { box.innerHTML = `<div class="placeholder">⚠ ${esc(String(e))}</div>`; }
+  } catch (e) { box.innerHTML = errorBox(e); }
 }
 
 function startEnvEdit() {
@@ -437,7 +447,7 @@ async function applyEnvEdit() {
     cancelEnvEdit();
     openInspect();
   } catch (e) {
-    prog.innerHTML = `⚠ ${esc(String(e))}`;
+    prog.innerHTML = `${ic("alert")} ${esc(String(e))}`;
     toast(String(e), "err", 9000);
   } finally {
     $("env-apply").disabled = false;
