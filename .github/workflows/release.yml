@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Створити чернетку релізу (інакше лише зібрати артефакти)"
+        description: "Опублікувати реліз (інакше лише зібрати артефакти)"
         type: boolean
         default: false
 
@@ -182,7 +182,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish draft release
+    name: Publish release
     needs: build
     # На ручному запуску реліз створюємо лише якщо явно попросили
     if: >-
@@ -253,14 +253,18 @@ jobs:
           Повний список змін — у [CHANGELOG.md](CHANGELOG.md).
           NOTES
 
-      # gh CLI передвстановлений на раннерах; теґ створюється разом із релізом
-      - name: Create draft release
+      # gh CLI передвстановлений на раннерах; теґ створюється разом із релізом.
+      # Реліз публікується одразу й позначається як Latest — саме його бачить
+      # людина, що заходить на сторінку проєкту, і на нього вказує кнопка
+      # завантаження. Чернетку довелося б відкривати й публікувати руками,
+      # а до того моменту користувачі бачили б попередню версію.
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ steps.ver.outputs.value }}" dist/* \
-            --draft \
+            --latest \
             --target "${{ github.sha }}" \
             --title "Prystan ${{ steps.ver.outputs.value }}" \
             --notes-file notes.md
-          echo "Чернетку створено. Перевірте й опублікуйте на вкладці Releases."
+          echo "Реліз ${{ steps.ver.outputs.value }} опубліковано як Latest."
