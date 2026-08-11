@@ -6,6 +6,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-10
+
 ### Fixed
 - **A server without Docker could not be used at all.** The connection was
   rejected outright with `Error in the hyper legacy client: client error
@@ -182,6 +184,7 @@ daemon and five real SSH servers.
 - Telegram alerts for container crashes and resource thresholds
 - Light and dark themes; Ukrainian, Russian and English interface
 
-[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.1
 [0.2.0]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.0
 [0.1.0]: https://github.com/YuraYarmola/prystan/releases/tag/v0.1.0
