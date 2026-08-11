@@ -6,6 +6,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A server without Docker could not be used at all.** The connection was
+  rejected outright with `Error in the hyper legacy client: client error
+  (SendRequest)`, so files, shell, processes and monitoring were unreachable
+  too — even though SSH itself was working perfectly. Transport and daemon are
+  now separate: if SSH is up the profile connects, the missing daemon becomes a
+  visible state of its own, and the app re-checks every 15 seconds. Containers,
+  images and the rest appear by themselves the moment Docker shows up, with no
+  reconnect. The same state now catches a daemon that dies while the app is
+  running, instead of tearing the whole connection down
+- Daemon errors are translated: `SendRequest` reads as "the daemon is not
+  answering on the socket — Docker is probably not installed or not running",
+  and a permission error points at the `docker` group
+- A TCP profile still fails fast when the host itself is unreachable — there the
+  daemon *is* the whole point of the connection
+
 ## [0.2.0] — 2026-08-10
 
 ### Added

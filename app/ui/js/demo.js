@@ -55,6 +55,11 @@ const D_CONTAINERS = {
     ctr("a2b3c4d5e6f7", "postgres-dev", "postgres:16-alpine", "running", "Up 40 minutes (healthy)", "", "", "55432:5432"),
     ctr("a3c4d5e6f7a8", "mailpit-dev", "axllent/mailpit:v1.20", "exited", "Exited (0) 2 days ago", "", ""),
   ],
+  // якщо на Edge «поставити Docker» (dm.dockerDown.delete("edge")), знайдеться це
+  edge: [
+    ctr("z1a2b3c4d5e6", "edge-proxy-1", "caddy:2.8-alpine", "running", "Up 2 hours (healthy)", "edge", "proxy", "443:443"),
+    ctr("z2b3c4d5e6f7", "edge-agent-1", "ghcr.io/example/agent:0.9", "running", "Up 2 hours", "edge", "agent"),
+  ],
 };
 
 const D_IMAGES = {
@@ -258,7 +263,25 @@ const dm = {
   logCid: null,
   terms: new Map(),      // sid -> { cwd, buf }
   cpuPhase: 0,
+  // сервери, на яких «немає Docker» — щоб показати цей стан і його відновлення;
+  // приберіть звідси id, і наступна перевірка знайде демон
+  dockerDown: new Set(["edge"]),
 };
+
+/** Відповідь про демон: «Edge» навмисно без Docker, щоб показати цей стан. */
+function engineInfo(conn, startup_ms) {
+  if (dm.dockerDown.has(conn)) {
+    return {
+      version: "", api_version: "", os: "", startup_ms,
+      docker_ok: false,
+      docker_error: "демон не відповідає на сокеті — схоже, Docker не встановлено або не запущено",
+    };
+  }
+  return {
+    version: "27.1.2", api_version: "1.46", os: "linux x86_64",
+    startup_ms, docker_ok: true, docker_error: "",
+  };
+}
 
 const clone = v => JSON.parse(JSON.stringify(v));
 const pick = (map, conn) => clone(map[conn] ?? []);
@@ -351,7 +374,9 @@ async function route(cmd, a = {}) {
 
     case "connect":
       dm.up.add(a.profileId);
-      return { version: "27.1.2", api_version: "1.46", os: "linux x86_64", startup_ms: 380 };
+      return engineInfo(a.profileId, 380);
+    case "docker_probe":
+      return engineInfo(conn, 0);
     case "disconnect":
       dm.up.delete(a.id);
       stopMonitor(a.id);

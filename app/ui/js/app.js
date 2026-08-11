@@ -21,6 +21,11 @@ function repaintView() {
 
 function connLost(e) {
   const msg = String(e);
+  // демон відвалився, але сервер лишився — це окремий стан, не обрив
+  if (/недоступний|SendRequest|hyper/i.test(msg)) {
+    probeDocker(S.activeConn, false);
+    return true;
+  }
   // помилка транспорту = зʼєднання впало; підіймемо його, якщо воно «бажане»
   if (/connect|transport|broken pipe|refused|closed|немає активного/i.test(msg)) {
     markDown(S.activeConn, t("conn.lost"));
@@ -32,7 +37,9 @@ function connLost(e) {
 let refreshSeq = 0;
 
 async function refreshAll(opts = {}) {
-  if (!S.activeConn || !S.conns[S.activeConn]?.up) { renderTree(); return; }
+  const c = S.conns[S.activeConn];
+  // без демона запитувати нічого: сервер живий, але списків контейнерів немає
+  if (!S.activeConn || !c?.up || !c.dockerOk) { S.loading = false; renderTree(); return; }
   const conn = S.activeConn;
   const seq = ++refreshSeq;
   if (!opts.quiet) setBusy(true);
@@ -63,7 +70,7 @@ async function refreshAll(opts = {}) {
 /* Легке оновлення лише списку контейнерів: дешевше за повний refreshAll,
    тому ним можна опитувати часто й стани змінюються майже миттєво. */
 async function refreshContainers() {
-  if (!S.activeConn || !S.conns[S.activeConn]?.up) return;
+  if (!S.activeConn || !S.conns[S.activeConn]?.up || !S.conns[S.activeConn].dockerOk) return;
   const conn = S.activeConn;
   try {
     const list = await invoke("list_containers", { conn });
@@ -242,6 +249,28 @@ function renderTree() {
       row.appendChild(b);
     }
     tree.appendChild(row);
+  }
+
+  // Демон недоступний: усе, що з нього читається, показувати нічим — але
+  // сам сервер лишається робочим, тому секцію вище ми не прибираємо.
+  if (!S.conns[S.activeConn]?.dockerOk) {
+    const box = document.createElement("div");
+    box.className = "nodocker";
+    box.innerHTML = `
+      <div class="nd-head">${ic("alert")} ${t("conn.noDocker")}</div>
+      <div class="nd-why">${esc(S.conns[S.activeConn]?.dockerError ?? "")}</div>
+      <div class="nd-hint">${t("conn.noDockerHint")}</div>
+      <button id="nd-retry" data-icon="rotate"><span>${t("conn.checkNow")}</span></button>`;
+    tree.appendChild(box);
+    applyIcons(box);
+    $("nd-retry").onclick = async () => {
+      $("nd-retry").disabled = true;
+      await probeDocker(S.activeConn, true);
+      const b = $("nd-retry");
+      if (b) b.disabled = false;
+    };
+    $("count").textContent = t("conn.noDockerShort");
+    return;
   }
 
   const secC = document.createElement("div");
@@ -592,10 +621,20 @@ const S_TABS = () => [["stats", t("tab.overview")], ["proc", t("tab.proc")], ["f
 const K_TABS = () => [["logs", t("tab.stackLogs")], ["compose", t("tab.compose")]];
 const P_TABS = () => [["files", t("tab.files")], ["term", t("tab.term")], ["compose", t("tab.compose")], ["du", t("du.title")]];
 
+const DOCKER_VIEWS = ["container", "stack", "images", "volumes", "networks", "df", "top", "dash"];
+
 function renderDetail() {
   const tabs = $("tabs");
   document.querySelectorAll(".pane").forEach(p => p.classList.remove("active"));
   $("welcome").style.display = "none";
+
+  // демон міг відвалитися просто зараз — тоді відкритий контейнер уже не існує
+  const conn = S.conns[S.activeConn];
+  if (conn?.up && !conn.dockerOk && DOCKER_VIEWS.includes(S.view)) {
+    S.selected = null;
+    S.selectedStack = null;
+    S.view = activeProfile()?.kind === "ssh" ? "server" : "welcome";
+  }
   syncMonitor();
 
   const show = (id, fn) => { $(id).classList.add("active"); fn?.(); };
@@ -633,13 +672,16 @@ function renderDetail() {
 
   if (S.view === "server") {
     const prof = activeProfile();
-    const info = S.conns[S.activeConn]?.info;
+    const cn = S.conns[S.activeConn];
+    const daemon = cn?.dockerOk
+      ? " · Docker " + esc(cn.info?.version ?? "")
+      : `<span style="color:var(--yellow)"> · ${t("conn.noDockerShort")}</span>`;
     tabs.style.display = "flex";
     $("detail-header").dataset.sig = "";
     $("detail-header").innerHTML = `
       ${ic("server", "big")}
       <span class="title">${esc(prof.name)}</span>
-      <span class="sub">${esc(prof.user)}@${esc(prof.host)}:${prof.port}${info ? " · Docker " + esc(info.version) : ""}</span>
+      <span class="sub">${esc(prof.user)}@${esc(prof.host)}:${prof.port}${daemon}</span>
       ${prof.readonly ? `<span class="badge ro">${ic("lock")} read-only</span>` : ""}`;
     tabs.innerHTML = S_TABS().map(([id, l]) => `<div class="tab ${S.srvTab === id ? "active" : ""}" data-tab="${id}">${l}</div>`).join("");
     tabs.querySelectorAll(".tab").forEach(t => t.onclick = () => { S.srvTab = t.dataset.tab; renderTree(); renderDetail(); });
@@ -1096,7 +1138,9 @@ listen("conn-state", ev => {
   if (!p.up && S.conns[p.conn]?.up) {
     const name = S.profiles.find(x => x.id === p.conn)?.name ?? p.conn;
     tgAlert(`⚠ <b>${name}</b>\n${t("conn.eventsLostShort")}`, "connLost");
-    markDown(p.conn, t("conn.eventsLostShort"));
+    // Спершу зʼясуємо, що саме впало: демон чи весь транспорт. Перевірка сама
+    // або переведе підключення в стан «без Docker», або зніме його.
+    probeDocker(p.conn, false).then(() => armDockerProbe());
   }
 });
 

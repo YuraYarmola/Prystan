@@ -24,16 +24,21 @@ async function connectProfile(id, opts = {}) {
   renderConnBox();
   try {
     const info = await invoke("connect", { profileId: id });
-    S.conns[id] = { up: true, info };
+    // Демон може бути не встановлений — сервер від цього не стає непридатним:
+    // файли, консоль і моніторинг працюють, а Docker чекаємо окремо.
+    S.conns[id] = { up: true, info, dockerOk: !!info.docker_ok, dockerError: info.docker_error };
     clearRetry(id);
     if (opts.manual !== false) await setWanted(id, true);
     if (!opts.silent) {
-      toast(`${t("conn.connectedTo")}: ${p.name} (Docker ${info.version})`, "ok", 3000);
+      toast(info.docker_ok
+        ? `${t("conn.connectedTo")}: ${p.name} (Docker ${info.version})`
+        : `${p.name}: ${t("conn.noDocker")}`, info.docker_ok ? "ok" : "warn", info.docker_ok ? 3000 : 7000);
       switchConn(id);
     } else {
       renderConnBox();
       if (S.activeConn === id) refreshAll();
     }
+    if (!info.docker_ok) armDockerProbe();
     return true;
   } catch (e) {
     delete S.conns[id];
@@ -101,6 +106,56 @@ function markDown(id, reason) {
   }
 }
 
+/* ── стан «сервер є, Docker немає» ──
+   Демон могли не встановити, вимкнути або він ще піднімається після
+   перезавантаження. Рвати через це підключення немає сенсу: сервером і далі
+   можна користуватись, а демон ми перевіряємо самі, поки він не з'явиться. */
+let probeTimer = null;
+
+function armDockerProbe() {
+  if (probeTimer) return;
+  probeTimer = setInterval(() => {
+    const waiting = Object.values(S.conns).some(c => c.up && !c.dockerOk);
+    if (!waiting) { clearInterval(probeTimer); probeTimer = null; return; }
+    if (document.visibilityState === "visible") probeDockerAll();
+  }, 15000);
+}
+
+async function probeDockerAll() {
+  for (const id of Object.keys(S.conns)) {
+    if (S.conns[id]?.up && !S.conns[id].dockerOk) await probeDocker(id, false);
+  }
+}
+
+/**
+ * @param {string} id
+ * @param {boolean} manual — користувач натиснув «перевірити зараз»
+ */
+async function probeDocker(id, manual) {
+  const c = S.conns[id];
+  if (!c?.up) return;
+  try {
+    const info = await invoke("docker_probe", { conn: id });
+    const was = c.dockerOk;
+    c.dockerOk = !!info.docker_ok;
+    c.dockerError = info.docker_error;
+    if (info.docker_ok) c.info = { ...c.info, ...info };
+    if (id === S.activeConn) renderEngineLabel();
+    if (info.docker_ok && !was) {
+      const name = S.profiles.find(p => p.id === id)?.name ?? id;
+      toast(t("conn.dockerBack", { name }), "ok", 5000);
+      if (id === S.activeConn) { S.loading = true; renderTree(); renderDetail(); refreshAll(); }
+      else renderConnBox();
+      return;
+    }
+    if (manual && !info.docker_ok) toast(info.docker_error || t("conn.noDocker"), "warn", 6000);
+    renderTree();
+  } catch (e) {
+    // підключення зникло зовсім — це вже інша історія
+    markDown(id, String(e));
+  }
+}
+
 /** Підняти всі зʼєднання, позначені autoconnect (старт застосунку). */
 async function restoreConnections() {
   const wanted = S.profiles.filter(p => p.autoconnect);
@@ -126,13 +181,21 @@ function switchConn(id) {
     S.statsFor = null;
     S.loading = true;
   }
-  const info = S.conns[id]?.info;
-  $("engine").textContent = info ? `Docker ${info.version} · API ${info.api_version} · ${info.os}` : "";
+  renderEngineLabel();
   $("ro-badge").style.display = isReadonly() ? "inline-flex" : "none";
   persist();
   renderTree();
   renderDetail();
   refreshAll();
+}
+
+/** Підпис у шапці: версія демона або те, що його немає. */
+function renderEngineLabel() {
+  const c = S.conns[S.activeConn];
+  const i = c?.info;
+  $("engine").textContent = !c?.up ? ""
+    : c.dockerOk && i ? `Docker ${i.version} · API ${i.api_version} · ${i.os}`
+    : t("conn.noDockerShort");
 }
 
 function renderConnBox() {
@@ -167,9 +230,12 @@ function renderConnBox() {
       chip.className = "connchip" + (S.activeConn === p.id ? " active" : "") + (waiting ? " waiting" : "");
       chip.title = (p.kind === "ssh" ? `ssh ${p.user}@${p.host}:${p.port}` : p.kind === "tcp" ? `tcp ${p.host}:${p.port}` : t("conn.localSocket"))
         + (p.readonly ? " · read-only" : "")
-        + (c?.up ? " · " + t("conn.connected") : waiting ? " · " + t("conn.reconnecting") : " · " + t("conn.clickConnect"));
+        + (c?.up ? " · " + (c.dockerOk ? t("conn.connected") : t("conn.noDockerShort"))
+           : waiting ? " · " + t("conn.reconnecting") : " · " + t("conn.clickConnect"));
+      const dotState = c?.up ? (c.dockerOk ? "up" : "nodocker")
+        : (c?.connecting || waiting) ? "connecting" : "";
       chip.innerHTML =
-        `<span class="cdot ${c?.up ? "up" : (c?.connecting || waiting) ? "connecting" : ""}"></span>` +
+        `<span class="cdot ${dotState}"></span>` +
         `<span class="nm">${esc(p.name)}</span>` +
         (c?.connecting ? `<span class="spin"></span>` : "") +
         (p.readonly ? `<span class="ro" title="read-only">${ic("lock", "sm")}</span>` : "") +

@@ -30,7 +30,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub struct ConnEntry {
     pub docker: Docker,
     pub tunnel: Option<Child>,
-    pub events_task: tauri::async_runtime::JoinHandle<()>,
+    /// Потік подій піднімається лише коли демон відповідає: інакше він просто
+    /// крутився б у циклі перепідключення.
+    pub events_task: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// Транспорт живий завжди, а от демон може бути не встановлений чи лежати.
+    /// Тоді підключення лишається — сервером усе одно можна користуватись.
+    pub docker_ok: bool,
 }
 
 pub struct AppState {
@@ -50,7 +55,21 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Клієнт для роботи з демоном. Якщо демон не відповідає, помилка має
+    /// казати про це прямо, а не текстом транспорту на кшталт `SendRequest`.
     pub fn docker(&self, conn: &str) -> Result<Docker, String> {
+        let map = self.conns.lock().unwrap();
+        let e = map
+            .get(conn)
+            .ok_or_else(|| format!("немає активного підключення '{conn}'"))?;
+        if !e.docker_ok {
+            return Err("Docker на цьому підключенні недоступний".into());
+        }
+        Ok(e.docker.clone())
+    }
+
+    /// Клієнт без перевірки стану — потрібен самій перевірці.
+    fn docker_raw(&self, conn: &str) -> Result<Docker, String> {
         self.conns
             .lock()
             .unwrap()
@@ -87,6 +106,9 @@ pub struct EngineInfo {
     api_version: String,
     os: String,
     startup_ms: u128,
+    /// false — транспорт працює, а демон ні. Підключення при цьому лишається.
+    docker_ok: bool,
+    docker_error: String,
 }
 
 /* ── profiles ─────────────────────────────────────────── */
@@ -363,7 +385,18 @@ async fn connect(
             None,
         ),
         "tcp" => {
-            let url = format!("tcp://{}:{}", profile.host, profile.port);
+            // Для TCP демон і є весь сенс підключення, тож спершу переконуємось,
+            // що хост узагалі відповідає — інакше «підключено, але без Docker»
+            // виглядало б як успіх на недосяжній адресі.
+            let addr = format!("{}:{}", profile.host, profile.port);
+            tokio::time::timeout(
+                Duration::from_secs(8),
+                tokio::net::TcpStream::connect(&addr),
+            )
+            .await
+            .map_err(|_| format!("{addr} не відповідає"))?
+            .map_err(|e| format!("{addr} недоступний: {e}"))?;
+            let url = format!("tcp://{addr}");
             (
                 Docker::connect_with_http(&url, 3600 * 24, API_DEFAULT_VERSION)
                     .map_err(|e| e.to_string())?,
@@ -387,42 +420,137 @@ async fn connect(
         k => return Err(format!("невідомий тип підключення: {k}")),
     };
 
-    let v = tokio::time::timeout(Duration::from_secs(15), docker.version())
-        .await
-        .map_err(|_| "демон не відповів за 15 с".to_string())?
-        .map_err(|e| format!("Docker не відповідає: {e}"))?;
+    // Транспорт уже працює. Демон може бути не встановлений або лежати —
+    // це окремий стан, а не причина відмовити в підключенні: файли, консоль
+    // і моніторинг сервера від Docker не залежать.
+    let probe = probe_daemon(&docker).await;
 
-    let events_task = spawn_events_stream(app, docker.clone(), profile_id.clone());
     // прогріваємо файловий ssh-агент одразу, щоб перша операція була миттєвою
     if profile.kind == "ssh" {
         if let Ok(a) = host::spawn_agent(&profile) {
             state.agents.lock().unwrap().insert(profile_id.clone(), a);
         }
     }
+
+    let events_task = probe
+        .as_ref()
+        .ok()
+        .map(|_| spawn_events_stream(app, docker.clone(), profile_id.clone()));
+
+    let info = engine_info(&probe, state.started.elapsed().as_millis());
     state.conns.lock().unwrap().insert(
         profile_id,
         ConnEntry {
             docker,
             tunnel,
             events_task,
+            docker_ok: probe.is_ok(),
         },
     );
+    Ok(info)
+}
 
-    Ok(EngineInfo {
-        version: v.version.unwrap_or_default(),
-        api_version: v.api_version.unwrap_or_default(),
-        os: format!(
-            "{} {}",
-            v.os.unwrap_or_default(),
-            v.arch.unwrap_or_default()
-        ),
-        startup_ms: state.started.elapsed().as_millis(),
-    })
+/// Один запит до демона з коротким терміном очікування.
+async fn probe_daemon(docker: &Docker) -> Result<bollard::models::SystemVersion, String> {
+    match tokio::time::timeout(Duration::from_secs(12), docker.version()).await {
+        Err(_) => Err("демон не відповів за 12 с".into()),
+        Ok(Err(e)) => Err(clean_docker_error(&e.to_string())),
+        Ok(Ok(v)) => Ok(v),
+    }
+}
+
+/// Технічні деталі транспорту користувачеві нічого не пояснюють:
+/// «client error (SendRequest)» насправді означає «сокет не відповів».
+fn clean_docker_error(raw: &str) -> String {
+    let low = raw.to_lowercase();
+    if low.contains("sendrequest") || low.contains("connection refused") || low.contains("broken pipe")
+    {
+        return "демон не відповідає на сокеті — схоже, Docker не встановлено або не запущено".into();
+    }
+    if low.contains("permission denied") {
+        return "немає доступу до сокета Docker — потрібні права (група docker)".into();
+    }
+    raw.chars().take(200).collect()
+}
+
+fn engine_info(probe: &Result<bollard::models::SystemVersion, String>, startup_ms: u128) -> EngineInfo {
+    match probe {
+        Ok(v) => EngineInfo {
+            version: v.version.clone().unwrap_or_default(),
+            api_version: v.api_version.clone().unwrap_or_default(),
+            os: format!(
+                "{} {}",
+                v.os.clone().unwrap_or_default(),
+                v.arch.clone().unwrap_or_default()
+            ),
+            startup_ms,
+            docker_ok: true,
+            docker_error: String::new(),
+        },
+        Err(e) => EngineInfo {
+            version: String::new(),
+            api_version: String::new(),
+            os: String::new(),
+            startup_ms,
+            docker_ok: false,
+            docker_error: e.clone(),
+        },
+    }
+}
+
+/// Перевірити, чи не з'явився демон. Викликається за таймером з інтерфейсу,
+/// поки підключення живе в стані «сервер є, Docker немає».
+#[tauri::command]
+async fn docker_probe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conn: String,
+) -> Result<EngineInfo, String> {
+    let docker = state.docker_raw(&conn)?;
+    let was_ok = state
+        .conns
+        .lock()
+        .unwrap()
+        .get(&conn)
+        .map(|c| c.docker_ok)
+        .unwrap_or(false);
+
+    let probe = probe_daemon(&docker).await;
+    let ok = probe.is_ok();
+
+    // потік подій піднімаємо рівно тоді, коли демон щойно ожив
+    let task = if ok && !was_ok {
+        Some(spawn_events_stream(app, docker.clone(), conn.clone()))
+    } else {
+        None
+    };
+
+    let mut map = state.conns.lock().unwrap();
+    if let Some(e) = map.get_mut(&conn) {
+        e.docker_ok = ok;
+        if let Some(t) = task {
+            if let Some(old) = e.events_task.replace(t) {
+                old.abort();
+            }
+        }
+        if !ok {
+            if let Some(old) = e.events_task.take() {
+                old.abort();
+            }
+        }
+    } else {
+        return Err(format!("немає активного підключення '{conn}'"));
+    }
+    drop(map);
+
+    Ok(engine_info(&probe, 0))
 }
 
 fn disconnect_inner(state: &AppState, id: &str) {
     if let Some(mut e) = state.conns.lock().unwrap().remove(id) {
-        e.events_task.abort();
+        if let Some(t) = e.events_task.take() {
+            t.abort();
+        }
         if let Some(t) = e.tunnel.as_mut() {
             procguard::release(t.id());
             let _ = t.kill();
@@ -566,6 +694,7 @@ fn main() {
             set_autoconnect,
             delete_profile,
             connect,
+            docker_probe,
             disconnect,
             active_connections,
             open_url,
