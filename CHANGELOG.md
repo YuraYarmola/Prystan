@@ -6,6 +6,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Every build reported `0.1.0` in the Windows file properties: `tauri.conf.json`
+  carried its own version that was never bumped alongside `Cargo.toml`. The field
+  is gone and the version now has a single source
+
 ## [0.2.2] — 2026-09-09
 
 ### Fixed
