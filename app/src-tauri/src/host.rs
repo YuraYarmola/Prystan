@@ -1184,6 +1184,39 @@ fn local_find(root: &str, q: &str, mode: &str, limit: usize) -> Result<Vec<Found
     Ok(found)
 }
 
+/// Що є в теці проєкту на сервері: compose-файл, Dockerfile, git.
+/// Те саме, що project_probe робить локально, тільки через ssh-агента.
+#[tauri::command]
+pub async fn host_project_probe(
+    state: State<'_, AppState>,
+    conn: String,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let p = get_profile(&state, &conn)?;
+    if p.kind == "local" {
+        return Ok(crate::project_probe(path));
+    }
+    let script = format!(
+        "cd {} 2>/dev/null || {{ echo NOPE; exit 0; }}; \
+         for f in compose.yaml compose.yml docker-compose.yml docker-compose.yaml; do \
+           [ -f \"$f\" ] && {{ echo \"C=$f\"; break; }}; done; \
+         [ -f Dockerfile ] && echo D; [ -e .git ] && echo G; exit 0",
+        sh_quote(&path)
+    );
+    let (_, out) = agent_exec(&state, &conn, &script, 30).await?;
+    let text = String::from_utf8_lossy(&out);
+    if text.contains("NOPE") {
+        return Ok(serde_json::json!({ "exists": false }));
+    }
+    let compose = text.lines().find_map(|l| l.strip_prefix("C=").map(|s| s.trim().to_string()));
+    Ok(serde_json::json!({
+        "exists": true,
+        "compose": compose,
+        "dockerfile": text.lines().any(|l| l.trim() == "D"),
+        "git": text.lines().any(|l| l.trim() == "G"),
+    }))
+}
+
 /* ── термінал хоста через ConPTY (C7: справжній ресайз) ─
    Локальний ConPTY дає ssh справжній термінал, тому SIGWINCH
    доходить до віддаленого shell, а пароль/passphrase можна
@@ -1201,6 +1234,7 @@ pub async fn host_term_open(
     conn: String,
     cols: u16,
     rows: u16,
+    cwd: Option<String>,
 ) -> Result<String, String> {
     let p = get_profile(&state, &conn)?;
     if !is_ssh(&p) {
@@ -1229,6 +1263,14 @@ pub async fn host_term_open(
         cmd.arg(&p.key_path);
     }
     cmd.arg(format!("{}@{}", p.user, p.host));
+    // Проєкт на сервері відкриває консоль просто у своїй теці. -tt вище
+    // гарантує tty і з віддаленою командою, а exec лишає звичний login-shell.
+    if let Some(dir) = cwd.filter(|d| !d.is_empty()) {
+        cmd.arg(format!(
+            "cd {} 2>/dev/null; exec \"${{SHELL:-/bin/bash}}\" -l",
+            sh_quote(&dir)
+        ));
+    }
     cmd.env("TERM", "xterm-256color");
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| format!("ssh: {e}"))?;

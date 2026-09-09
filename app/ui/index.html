@@ -308,7 +308,7 @@
         <div class="form-grid">
           <label data-i18n="build.dir"></label>
           <div class="pathrow">
-            <input id="bd-dir" class="mono-input" placeholder="E:projmyapp" />
+            <input id="bd-dir" class="mono-input" placeholder="E:\proj\myapp" />
             <button id="bd-pick" data-icon="folderOpen" data-i18n-title="proj.pick"></button>
           </div>
           <label data-i18n="build.file"></label><input id="bd-file" placeholder="Dockerfile" />
@@ -546,6 +546,25 @@
     </div>
   </div>
 
+  <!-- вибір теки на сервері: рідного діалогу по SSH немає, тому свій -->
+  <div class="modal-back" id="pickdir-modal">
+    <div class="modal" style="width:560px;height:70vh">
+      <div class="mhead"><span data-i18n="proj.pickRemote"></span> <span id="pd-where" class="hint"></span>
+        <span class="x" data-icon="x" data-close="pickdir-modal"></span></div>
+      <div class="mbody" style="display:flex;flex-direction:column;padding:0;gap:0">
+        <div class="toolbar" style="flex-wrap:nowrap">
+          <button id="pd-up" data-icon="arrowUp" data-i18n-title="files.up"></button>
+          <input id="pd-path" class="mono-input" style="flex:1" spellcheck="false" />
+        </div>
+        <div id="pd-list" class="respane"></div>
+      </div>
+      <div class="mfoot">
+        <button data-close="pickdir-modal" data-i18n="conn.cancel"></button>
+        <button id="pd-ok" class="primary" data-icon="check"><span data-i18n="proj.choose"></span></button>
+      </div>
+    </div>
+  </div>
+
   <!-- локальні проєкти -->
   <div class="modal-back" id="project-modal">
     <div class="modal" style="width:600px">
@@ -555,9 +574,14 @@
         <div style="border-top:1px solid var(--border);padding-top:12px">
           <div style="font-weight:600;margin-bottom:10px" id="pj-title"></div>
           <div class="form-grid">
+            <label data-i18n="proj.where"></label>
+            <select id="pj-where">
+              <option value="local" data-i18n="proj.local"></option>
+              <option value="remote" data-i18n="proj.remote"></option>
+            </select>
             <label data-i18n="proj.path"></label>
             <div class="pathrow">
-              <input id="pj-path" class="mono-input" placeholder="E:workmyapp" />
+              <input id="pj-path" class="mono-input" placeholder="E:\work\myapp" />
               <button id="pj-pick" data-icon="folderOpen" data-i18n-title="proj.pick"></button>
             </div>
             <label data-i18n="proj.server"></label><select id="pj-conn"></select>

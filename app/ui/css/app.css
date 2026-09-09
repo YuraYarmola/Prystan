@@ -573,3 +573,11 @@ body.editor-docked main { margin-right: var(--dockw, 46vw); }
 /* кнопка вибору теки поруч із полем */
 .pathrow { display: flex; gap: 6px; }
 .pathrow input { flex: 1; min-width: 0; }
+
+/* оглядач тек на сервері */
+#pd-list .pdrow {
+  display: flex; align-items: center; gap: 8px; padding: 6px 14px;
+  border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px;
+}
+#pd-list .pdrow:hover { background: var(--panel2); }
+.projchip .rem { color: var(--dim); display: inline-flex; }

@@ -87,7 +87,14 @@ const S = {
 const activeProfile = () => S.profiles.find(p => p.id === S.activeConn);
 // Проєкт лежить на цій машині й до профілю сервера стосунку не має:
 // read-only на проді не повинен забороняти правити власні файли.
-const isReadonly = () => S.view !== "project" && !!activeProfile()?.readonly;
+/** Підключення, до якого належить відкритий проєкт: сервер або ця машина. */
+const projConn = () => (S.project?.remote ? S.project.conn : "local");
+const profileById = id => S.profiles.find(p => p.id === id);
+// Локальний проєкт — власні файли, read-only проду його не стосується;
+// а от проєкт на прод-сервері під read-only лишається.
+const isReadonly = () => S.view === "project"
+  ? !!(S.project?.remote && profileById(S.project.conn)?.readonly)
+  : !!activeProfile()?.readonly;
 const isHostView = () => S.view === "server";
 function targetKey() {
   if (S.view === "project") return "@proj:" + (S.project?.id ?? "");

@@ -132,7 +132,7 @@ function renderProc() {
    углиб із розмірами й смужками; у теку можна провалитись і копати далі. */
 
 const duKey = () => (S.view === "project" ? "@proj:" + (S.project?.id ?? "") : S.activeConn);
-const duConn = () => (S.view === "project" ? "local" : S.activeConn);
+const duConn = () => (S.view === "project" ? projConn() : S.activeConn);
 const duRoot = () => (S.view === "project" ? (S.project?.path ?? "/") : "/");
 const duPath = () => S.duPath[duKey()] ?? duRoot();
 

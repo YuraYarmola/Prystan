@@ -30,6 +30,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Projects belong to a server: the list shows the folders pinned for the
   selected connection, and the form defaults to it (or "all servers")
 - A native folder picker for project and build folders instead of typing paths
+- **Projects can live on a server.** A project is either a folder on this machine
+  or a folder on one of the SSH hosts; for a remote one the file manager, the
+  editor, folder sizes and `compose up / build / down` all run on that host, and
+  the shell opens directly inside the folder. The folder is picked with a built-in
+  browser over SSH, since no native dialog can see a remote disk. Read-only on the
+  server applies to its projects too
 
 ## [0.2.1] — 2026-08-10
 

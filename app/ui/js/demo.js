@@ -370,7 +370,8 @@ async function route(cmd, a = {}) {
     case "delete_project":
       dm.projects = dm.projects.filter(x => x.id !== a.id);
       return clone(dm.projects);
-    case "project_probe": return { exists: true, compose: "docker-compose.yml", dockerfile: true, git: true };
+    case "project_probe": case "host_project_probe":
+      return { exists: true, compose: "docker-compose.yml", dockerfile: true, git: true };
 
     case "connect":
       dm.up.add(a.profileId);

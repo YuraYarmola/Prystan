@@ -152,7 +152,7 @@ const activeSess = () => {
 };
 
 /** Куди відкривати консоль: у контейнер, на сервер по SSH чи локально в теці. */
-const termMode = () => (S.view === "project" ? "local" : isHostView() ? "host" : "container");
+const termMode = () => (S.view === "project" ? (S.project?.remote ? "host" : "local") : isHostView() ? "host" : "container");
 
 async function openTerm() {
   const key = targetKey();
@@ -245,7 +245,12 @@ async function newTermSession() {
     if (mode === "local") {
       sid = await invoke("local_term_open", { cwd: curPath(), cols: term.cols, rows: term.rows });
     } else if (host) {
-      sid = await invoke("host_term_open", { conn: S.activeConn, cols: term.cols, rows: term.rows });
+      // проєкт на сервері — консоль відкривається одразу в його теці
+      sid = await invoke("host_term_open", {
+        conn: S.view === "project" ? projConn() : S.activeConn,
+        cols: term.cols, rows: term.rows,
+        cwd: S.view === "project" ? curPath() : null,
+      });
     } else {
       sid = await invoke("term_open", { conn: S.activeConn, id: S.selected.id, shell: $("term-shell").value });
     }
@@ -276,7 +281,7 @@ async function newTermSession() {
     invoke("inspect_container", { conn: S.activeConn, id: S.selected.id })
       .then(j => { sess.cwd = j?.Config?.WorkingDir || "/"; })
       .catch(() => {});
-  } else if (mode === "local") {
+  } else if (mode === "local" || S.view === "project") {
     sess.cwd = curPath();
   } else {
     sess.cwd = "/root";

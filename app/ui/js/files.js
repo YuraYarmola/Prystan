@@ -2,10 +2,11 @@
 /* Файли (контейнер і хост) + редактор */
 
 /* Файловий менеджер працює над трьома джерелами: контейнер, хост по SSH
-   і тека проєкту на цій машині. Різниця лише в тому, яку команду кликати. */
+   і тека проєкту — на цій машині або на сервері. Різниця лише в тому,
+   яку команду кликати і куди. */
 const isFsHost = () => S.view === "server" || S.view === "project";
-const fsConn = () => (S.view === "project" ? "local" : S.activeConn);
-const fsKind = () => (S.view === "project" ? "local" : activeProfile()?.kind);
+const fsConn = () => (S.view === "project" ? projConn() : S.activeConn);
+const fsKind = () => (S.view === "project" ? (S.project?.remote ? "ssh" : "local") : activeProfile()?.kind);
 
 function curPath() {
   const saved = S.filesPath[targetKey()];

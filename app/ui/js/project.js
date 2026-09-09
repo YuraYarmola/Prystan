@@ -47,8 +47,9 @@ function renderProjectBox() {
   for (const p of shown) {
     const chip = document.createElement("div");
     chip.className = "projchip" + (S.view === "project" && S.project?.id === p.id ? " active" : "");
-    chip.title = p.path;
-    chip.innerHTML = `${ic("folderCode", "sm")}<span class="nm">${esc(p.name)}</span>`;
+    chip.title = p.remote ? `${profileById(p.conn)?.host ?? p.conn}:${p.path}` : p.path;
+    chip.innerHTML = `${ic("folderCode", "sm")}<span class="nm">${esc(p.name)}</span>` +
+      (p.remote ? `<span class="rem" title="${esc(t("proj.remote"))}">${ic("server", "sm")}</span>` : "");
     chip.onclick = () => openProject(p.id);
     chip.oncontextmenu = e => {
       e.preventDefault();
@@ -70,6 +71,11 @@ function renderProjectBox() {
 async function openProject(id) {
   const p = S.projects.find(x => x.id === id);
   if (!p) return;
+  if (p.remote && !S.conns[p.conn]?.up) {
+    toast(t("proj.connectFirst", { name: profileById(p.conn)?.name ?? p.conn }), "warn", 5000);
+    const ok = await connectProfile(p.conn, { silent: true });
+    if (!ok) return;
+  }
   S.project = p;
   S.projInfo = null;
   S.view = "project";
@@ -80,7 +86,9 @@ async function openProject(id) {
   renderDetail();
   // що є в теці (compose, Dockerfile, git) — вирішує, які дії показувати
   try {
-    const info = await invoke("project_probe", { path: p.path });
+    const info = p.remote
+      ? await invoke("host_project_probe", { conn: p.conn, path: p.path })
+      : await invoke("project_probe", { path: p.path });
     if (S.project?.id !== p.id) return;
     S.projInfo = info;
     renderProjectHeader();
@@ -96,7 +104,7 @@ function renderProjectHeader() {
   h.innerHTML = `
     ${ic("folderCode", "big")}
     <span class="title">${esc(p.name)}</span>
-    <span class="sub mono">${esc(p.path)}</span>
+    <span class="sub mono">${p.remote ? esc((profileById(p.conn)?.host ?? p.conn) + ":") : ""}${esc(p.path)}</span>
     <span id="proj-badges">${
       !info ? ""
       : !info.exists ? `<span class="badge" style="border-color:var(--red);color:var(--red)">${t("proj.missing")}</span>`
@@ -116,11 +124,11 @@ function renderProjectHeader() {
 function openProjectCompose() {
   const p = S.project;
   S.composeCtx = {
-    conn: "local",
+    conn: projConn(),
     project: p.name,
     workdir: p.path,
     config: S.projInfo?.compose ? p.path + "/" + S.projInfo.compose : "",
-    kind: "local",
+    kind: p.remote ? "ssh" : "local",
   };
   const hasCompose = !!S.projInfo?.compose;
   $("cm-workdir").textContent = `${t("compose.workdir")}: ${p.path}` +
@@ -139,7 +147,7 @@ function renderProjectList() {
     ? S.projects.map(p => `
       <div class="pitem">
         <span class="pname">${ic("folderCode", "sm")} ${esc(p.name)}</span>
-        <span class="pdetail mono">${esc(p.path)}</span>
+        <span class="pdetail mono">${p.remote ? esc((profileById(p.conn)?.name ?? p.conn) + " · ") : ""}${esc(p.path)}</span>
         <button data-x="edit" data-id="${esc(p.id)}">${ic("pencil")}</button>
         <button data-x="del" data-id="${esc(p.id)}" class="danger">${ic("trash")}</button>
       </div>`).join("")
@@ -161,6 +169,8 @@ function fillProjectForm(p) {
   $("pj-title").textContent = p ? t("conn.edit") + ": " + p.name : t("proj.add");
   $("pj-path").value = p?.path ?? "";
   $("pj-name").value = p?.name ?? "";
+  $("pj-where").value = p?.remote ? "remote" : "local";
+  syncProjectWhere();
   // сервер за замовчуванням — той, що відкритий зараз
   const sel = $("pj-conn");
   sel.innerHTML = `<option value="">${esc(t("proj.allServers"))}</option>` +
@@ -168,6 +178,61 @@ function fillProjectForm(p) {
   const want = p ? (p.conn ?? "") : (S.activeConn ?? "");
   sel.value = want;
   if (sel.value !== want) sel.value = "";
+}
+
+/** Підказки у формі залежать від того, де лежить тека. */
+function syncProjectWhere() {
+  const remote = $("pj-where").value === "remote";
+  $("pj-path").placeholder = remote ? "/srv/myapp" : "E:\\work\\myapp";
+  $("pj-pick").title = remote ? t("proj.pickRemote") : t("proj.pick");
+  // серверній теці потрібен конкретний сервер — «усі сервери» тут не має сенсу
+  const all = $("pj-conn").querySelector('option[value=""]');
+  if (all) all.disabled = remote;
+  if (remote && !$("pj-conn").value) $("pj-conn").value = S.activeConn ?? "";
+}
+
+/* ── оглядач тек на сервері ──
+   Рідного діалогу по SSH не буває, тож свій: список підтек через того самого
+   агента, що й файловий менеджер. */
+let pdResolve = null;
+let pdConn = null;
+
+function pickRemoteFolder(conn, start) {
+  return new Promise(resolve => {
+    pdResolve = resolve;
+    pdConn = conn;
+    $("pd-where").textContent = "· " + (profileById(conn)?.name ?? conn);
+    $("pickdir-modal").classList.add("open");
+    pdOpen(start && start.startsWith("/") ? start : "/");
+  });
+}
+
+async function pdOpen(path) {
+  $("pd-path").value = path;
+  $("pd-list").innerHTML = loadingBox(t("files.reading") + " " + path);
+  try {
+    const entries = await invoke("host_fs_list", { conn: pdConn, path });
+    const dirs = entries.filter(e => e.is_dir).sort((a, b) => a.name.localeCompare(b.name));
+    $("pd-list").innerHTML = dirs.length
+      ? dirs.map(d => `<div class="pdrow" data-name="${esc(d.name)}">${ic("folder")} ${esc(d.name)}</div>`).join("")
+      : `<div class="placeholder">${t("files.empty")}</div>`;
+    $("pd-list").querySelectorAll(".pdrow").forEach(el =>
+      el.onclick = () => pdOpen(joinPath($("pd-path").value, el.dataset.name)));
+  } catch (e) {
+    $("pd-list").innerHTML = errorBox(e);
+  }
+}
+
+function wirePickDir() {
+  $("pd-up").onclick = () => { const p = $("pd-path").value; if (p !== "/") pdOpen(parentPath(p)); };
+  $("pd-path").onkeydown = e => { if (e.key === "Enter") pdOpen($("pd-path").value.trim() || "/"); };
+  $("pd-ok").onclick = () => {
+    $("pickdir-modal").classList.remove("open");
+    pdResolve?.($("pd-path").value.trim().replace(/\/+$/, "") || "/");
+    pdResolve = null;
+  };
+  // закрили хрестиком або Esc — без вибору
+  document.querySelector('#pickdir-modal [data-close]').addEventListener("click", () => { pdResolve?.(null); pdResolve = null; });
 }
 
 /** Системний діалог вибору теки; null — користувач передумав. */
@@ -198,7 +263,10 @@ function wireProjectUI() {
     if (!path) return toast(t("proj.needPath"));
     try {
       S.projects = await invoke("save_project", {
-        project: { id: editingProject?.id ?? "", name: $("pj-name").value.trim(), path, conn: $("pj-conn").value },
+        project: {
+          id: editingProject?.id ?? "", name: $("pj-name").value.trim(), path,
+          conn: $("pj-conn").value, remote: $("pj-where").value === "remote",
+        },
       });
       editingProject = null;
       fillProjectForm(null);
@@ -208,8 +276,19 @@ function wireProjectUI() {
     } catch (e) { toast(String(e)); }
   };
   $("pj-path").onkeydown = e => { if (e.key === "Enter") $("pj-save").click(); };
+  $("pj-where").onchange = syncProjectWhere;
+  wirePickDir();
   $("pj-pick").onclick = async () => {
-    const dir = await pickFolder($("pj-path").value.trim());
+    const remote = $("pj-where").value === "remote";
+    let dir;
+    if (remote) {
+      const conn = $("pj-conn").value;
+      if (!conn) return toast(t("proj.needServer"), "warn", 4000);
+      if (!S.conns[conn]?.up) return toast(t("proj.connectFirst", { name: profileById(conn)?.name ?? conn }), "warn", 5000);
+      dir = await pickRemoteFolder(conn, $("pj-path").value.trim());
+    } else {
+      dir = await pickFolder($("pj-path").value.trim());
+    }
     if (!dir) return;
     $("pj-path").value = dir;
     if (!$("pj-name").value.trim()) $("pj-name").value = dir.split("/").filter(Boolean).pop() ?? "";

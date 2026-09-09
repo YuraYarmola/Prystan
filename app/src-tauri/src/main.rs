@@ -197,6 +197,10 @@ pub struct Project {
     /// так поводяться проєкти, створені до появи цього поля.
     #[serde(default)]
     pub conn: String,
+    /// true — тека лежить на сервері `conn`, і все (файли, консоль, compose)
+    /// іде туди по SSH; false — тека на цій машині.
+    #[serde(default)]
+    pub remote: bool,
 }
 
 fn load_projects(path: &PathBuf) -> Vec<Project> {
@@ -222,8 +226,15 @@ fn list_projects(state: State<'_, AppState>) -> Vec<Project> {
 fn save_project(state: State<'_, AppState>, mut project: Project) -> Result<Vec<Project>, String> {
     let norm = project.path.replace('\\', "/");
     let norm = norm.trim_end_matches('/').to_string();
-    let probe = std::path::Path::new(&project.path);
-    if !probe.is_dir() {
+    if project.remote {
+        // серверну теку звідси не перевірити — це робить host_project_probe
+        if project.conn.is_empty() || project.conn == "local" {
+            return Err("для теки на сервері потрібно вибрати сервер".into());
+        }
+        if !norm.starts_with('/') {
+            return Err("шлях на сервері має починатися з /".into());
+        }
+    } else if !std::path::Path::new(&project.path).is_dir() {
         return Err(format!("теки не існує: {}", project.path));
     }
     project.path = if norm.is_empty() { "/".into() } else { norm };
@@ -766,6 +777,7 @@ fn main() {
             host::host_monitor_stop,
             host::host_du,
             host::host_fs_find,
+            host::host_project_probe,
             host::local_term_open,
             update::check_update,
             host::compose_cmd,

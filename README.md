@@ -234,9 +234,17 @@ Available for SSH connections.
 
 For the folder you are actually working in.
 
-**Set up.** **＋** next to *PROJECTS* → pick a folder with the **…** button (a native
-dialog) or paste the path. A project belongs to the server that is selected at the
-time — production gets its folders, staging its own; "all servers" makes it global.
+**Set up.** **＋** next to *PROJECTS* → choose where the folder is:
+
+- **on this computer** — pick it with the **…** button (a native dialog) or paste the
+  path; `compose` runs with your local `docker`;
+- **on the server** — pick a server, then browse its disk with the **…** button (an
+  in-app browser over SSH) or type a path like `/srv/myapp`; files, the editor,
+  folder sizes and `compose` all run on that host, and the shell opens directly
+  inside the folder. Such a project is marked with a server icon.
+
+A project belongs to the server selected at the time — production gets its folders,
+staging its own; "all servers" makes a local project visible everywhere.
 
 **Use.** The project gets its files with the editor, a **shell opened right inside
 that folder**, `compose up / build / down / restart / pull` run by your local
