@@ -193,6 +193,10 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub path: String,
+    /// До якого сервера належить тека. Порожньо — показувати на всіх:
+    /// так поводяться проєкти, створені до появи цього поля.
+    #[serde(default)]
+    pub conn: String,
 }
 
 fn load_projects(path: &PathBuf) -> Vec<Project> {
@@ -280,6 +284,20 @@ fn project_probe(path: String) -> serde_json::Value {
         "dockerfile": dir.join("Dockerfile").is_file(),
         "git": dir.join(".git").exists(),
     })
+}
+
+/// Системний діалог вибору теки. Шлях у полі можна й надрукувати, але
+/// звичний спосіб — показати пальцем; rfd дає рідне вікно на кожній ОС.
+#[tauri::command]
+async fn pick_folder(start: Option<String>) -> Result<Option<String>, String> {
+    let mut d = rfd::AsyncFileDialog::new().set_title("Тека проєкту");
+    if let Some(s) = start.filter(|s| !s.is_empty() && std::path::Path::new(s).is_dir()) {
+        d = d.set_directory(s);
+    }
+    Ok(d
+        .pick_folder()
+        .await
+        .map(|h| h.path().to_string_lossy().replace('\\', "/")))
 }
 
 /* ── connections ──────────────────────────────────────── */
@@ -703,6 +721,7 @@ fn main() {
             save_project,
             delete_project,
             project_probe,
+            pick_folder,
             containers::list_containers,
             containers::containers_stats_snapshot,
             containers::container_action,

@@ -241,6 +241,7 @@ function syncGeneralSettings() {
   $("cfg-dock").checked = S.cfg.editorDock;
   $("cfg-upd").checked = S.cfg.checkUpdates;
   $("cfg-demo").checked = localStorage.getItem("prystan-demo") === "1";
+  $("cfg-anim").checked = S.cfg.animations !== false;
   $("cfg-upd-state").textContent = S.update
     ? (S.update.newer ? t("upd.available", { v: S.update.latest }) : t("upd.latest", { v: S.update.current }))
     : "";
@@ -258,6 +259,11 @@ function wireGeneralSettings() {
   $("cfg-confirm").onchange = e => { S.cfg.confirmDestructive = e.target.checked; persist(); };
   $("cfg-dock").onchange = e => setEditorDock(e.target.checked);
   $("cfg-upd").onchange = e => { S.cfg.checkUpdates = e.target.checked; persist(); };
+  $("cfg-anim").onchange = e => {
+    S.cfg.animations = e.target.checked;
+    document.body.classList.toggle("noanim", !S.cfg.animations);
+    persist();
+  };
   // підміна транспорту робиться на старті, тож перемикач вимагає перезавантаження
   $("cfg-demo").onchange = e => {
     localStorage.setItem("prystan-demo", e.target.checked ? "1" : "0");

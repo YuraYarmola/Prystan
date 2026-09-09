@@ -123,6 +123,9 @@ do not.
 
 **Import** takes existing `docker context` entries and turns them into profiles.
 
+**Right-click a chip** to copy the server's IP, `user@host` or a ready `ssh` command;
+the address in the *SERVER* line is click-to-copy as well.
+
 ## Containers
 
 **Use.** The list groups containers by compose project. A group can be started,
@@ -231,7 +234,9 @@ Available for SSH connections.
 
 For the folder you are actually working in.
 
-**Set up.** **＋** next to *PROJECTS* → enter the path to a folder on your machine.
+**Set up.** **＋** next to *PROJECTS* → pick a folder with the **…** button (a native
+dialog) or paste the path. A project belongs to the server that is selected at the
+time — production gets its folders, staging its own; "all servers" makes it global.
 
 **Use.** The project gets its files with the editor, a **shell opened right inside
 that folder**, `compose up / build / down / restart / pull` run by your local
@@ -254,7 +259,9 @@ and have nothing to do with the server.
   image list.
 - **Environment variables** are editable in the Inspect tab exactly like the JetBrains
   plugin does it — the container is recreated with the new values, and the old one is
-  restored if anything goes wrong. Secrets are masked until you open them.
+  restored if anything goes wrong. Secrets are masked until you open them. Every variable is its own line: the buttons
+  or the right-click menu copy the name, the real value (even while masked) or
+  `KEY=value`; double-click copies the value.
 - **CPU and memory limits** change without recreating the container.
 
 | Image layers | Vulnerability scan | Inspect and environment |
@@ -305,6 +312,7 @@ Stored locally and clearable.
 | Ask before deleting | confirmation dialogs for destructive actions |
 | Editor to the side | dock the editor instead of covering the window |
 | Check for updates | one request to GitHub Releases at startup |
+| Indicator animations | the healthy/unhealthy pulse; off saves a little more GPU |
 | Demo mode | invented data instead of real |
 
 **Theme** (moon/sun) and **language** (uk / ru / en) are next to the gear.

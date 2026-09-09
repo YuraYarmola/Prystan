@@ -6,6 +6,31 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **GPU usage.** Health and connection indicators pulsed by animating
+  `box-shadow`, which repaints the element on every frame; with a few dozen
+  containers on screen the WebView2 GPU process sat at 20–25 %. The pulse is now
+  a ring on a pseudo-element animating only `transform` and `opacity` on a
+  stepped curve, so the compositor draws 8 frames per cycle instead of 60 per
+  second. Measured on the same tree: 9.8 % → 0.8 %. Animations also pause while
+  the window is hidden, respect `prefers-reduced-motion`, and can be switched
+  off in Settings
+- The amber "no Docker" dot on a connection chip glowed and looked twice the
+  size of the green one; chip dots are now the same size with no glow
+- The servers dashboard entry and the server mode buttons scrolled away with the
+  container list; they now sit in a fixed strip above it
+
+### Added
+- Right-click on a connection chip or the server line: copy IP, copy
+  `user@host`, copy a ready `ssh` command; the IP in the server line is also
+  click-to-copy
+- Environment variables in Inspect are separate lines with copy buttons and a
+  menu: copy the name, the value (the real one even when masked on screen), or
+  `KEY=value`; double-click copies the value
+- Projects belong to a server: the list shows the folders pinned for the
+  selected connection, and the form defaults to it (or "all servers")
+- A native folder picker for project and build folders instead of typing paths
+
 ## [0.2.1] — 2026-08-10
 
 ### Fixed
@@ -81,7 +106,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The list filter also matches ports, container ids and status text
 - A first-run screen that offers the three ways to start instead of an empty pane
 - Settings for refresh intervals, background monitoring, log buffer, default
-  shell, delete confirmations and update checks — the key was handed to the shell as
+  shell, delete confirmations and update checks
+
+### Fixed
+- `Ctrl+V` in the terminal pasted nothing — the key was handed to the shell as
   `^V` instead of letting the browser's own paste run. `Ctrl+C` now copies when
   there is a selection and still sends the interrupt when there is none
 - Right-click in the terminal silently pasted instead of offering a menu; there

@@ -616,6 +616,7 @@ async function route(cmd, a = {}) {
     case "tg_detect_chat": return { chat_id: "-1001234567890", title: "Prystan demo" };
     case "check_update": return { current: "0.1.0", latest: "0.1.0", newer: false, url: "", notes: "" };
     case "clipboard_read": return "";
+    case "pick_folder": return "E:/work/shopfront";
     case "open_url": return null;
 
     default:

@@ -21,7 +21,7 @@ function renderProjectBox() {
   const sec = document.createElement("div");
   sec.className = "section";
   sec.innerHTML = `${ic("folderCode")} ${t("proj.section")}` +
-    `<span class="cnt">${S.projects.length}</span>` +
+    `<span class="cnt">${visibleProjects().length}</span>` +
     `<span class="plus" title="${esc(t("proj.add"))}">${ic("plus")}</span>`;
   sec.onclick = e => {
     if (e.target.closest(".plus")) { openProjectModal(); return; }
@@ -33,15 +33,18 @@ function renderProjectBox() {
 
   if (S.projCollapsed) return;
 
-  if (!S.projects.length) {
+  // Список привʼязаний до вибраного сервера: для проду — свої теки, для
+  // стейджа — свої. Проєкти без сервера (створені раніше) видно скрізь.
+  const shown = visibleProjects();
+  if (!shown.length) {
     box.insertAdjacentHTML("beforeend",
-      `<div class="hint" style="padding:8px 12px">${t("proj.empty")}</div>`);
+      `<div class="hint" style="padding:8px 12px">${S.projects.length ? t("proj.emptyFor") : t("proj.empty")}</div>`);
     return;
   }
 
   const chips = document.createElement("div");
   chips.id = "projchips";
-  for (const p of S.projects) {
+  for (const p of shown) {
     const chip = document.createElement("div");
     chip.className = "projchip" + (S.view === "project" && S.project?.id === p.id ? " active" : "");
     chip.title = p.path;
@@ -149,11 +152,28 @@ function renderProjectList() {
   });
 }
 
+function visibleProjects() {
+  return S.projects.filter(p => !p.conn || p.conn === S.activeConn);
+}
+
 function fillProjectForm(p) {
   editingProject = p;
   $("pj-title").textContent = p ? t("conn.edit") + ": " + p.name : t("proj.add");
   $("pj-path").value = p?.path ?? "";
   $("pj-name").value = p?.name ?? "";
+  // сервер за замовчуванням — той, що відкритий зараз
+  const sel = $("pj-conn");
+  sel.innerHTML = `<option value="">${esc(t("proj.allServers"))}</option>` +
+    S.profiles.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  const want = p ? (p.conn ?? "") : (S.activeConn ?? "");
+  sel.value = want;
+  if (sel.value !== want) sel.value = "";
+}
+
+/** Системний діалог вибору теки; null — користувач передумав. */
+async function pickFolder(start) {
+  try { return await invoke("pick_folder", { start: start || null }); }
+  catch (e) { toast(String(e)); return null; }
 }
 
 function openProjectModal(p = null) {
@@ -178,7 +198,7 @@ function wireProjectUI() {
     if (!path) return toast(t("proj.needPath"));
     try {
       S.projects = await invoke("save_project", {
-        project: { id: editingProject?.id ?? "", name: $("pj-name").value.trim(), path },
+        project: { id: editingProject?.id ?? "", name: $("pj-name").value.trim(), path, conn: $("pj-conn").value },
       });
       editingProject = null;
       fillProjectForm(null);
@@ -188,4 +208,10 @@ function wireProjectUI() {
     } catch (e) { toast(String(e)); }
   };
   $("pj-path").onkeydown = e => { if (e.key === "Enter") $("pj-save").click(); };
+  $("pj-pick").onclick = async () => {
+    const dir = await pickFolder($("pj-path").value.trim());
+    if (!dir) return;
+    $("pj-path").value = dir;
+    if (!$("pj-name").value.trim()) $("pj-name").value = dir.split("/").filter(Boolean).pop() ?? "";
+  };
 }

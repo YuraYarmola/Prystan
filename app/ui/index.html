@@ -46,6 +46,7 @@
         <span style="flex:1"></span>
         <button id="bulk-toggle" class="ghost" data-icon="checkSquare" data-i18n-title="bulk.toggle"></button>
       </div>
+      <div id="treehead"></div>
       <div id="tree"></div>
       <div id="bulkbar" style="display:none">
         <span id="bulk-count">0</span>
@@ -305,7 +306,11 @@
       <div class="mhead"><span data-i18n="build.title"></span> <span class="x" data-icon="x" data-close="build-modal"></span></div>
       <div class="mbody">
         <div class="form-grid">
-          <label data-i18n="build.dir"></label><input id="bd-dir" class="mono-input" placeholder="E:\proj\myapp" />
+          <label data-i18n="build.dir"></label>
+          <div class="pathrow">
+            <input id="bd-dir" class="mono-input" placeholder="E:projmyapp" />
+            <button id="bd-pick" data-icon="folderOpen" data-i18n-title="proj.pick"></button>
+          </div>
           <label data-i18n="build.file"></label><input id="bd-file" placeholder="Dockerfile" />
           <label data-i18n="build.tag"></label><input id="bd-tag" placeholder="myapp:dev" />
         </div>
@@ -471,6 +476,7 @@
           <label class="chk"><input type="checkbox" id="cfg-confirm" /> <span data-i18n="set.confirm"></span></label>
           <label class="chk"><input type="checkbox" id="cfg-dock" /> <span data-i18n="set.dock"></span></label>
           <label class="chk"><input type="checkbox" id="cfg-upd" /> <span data-i18n="set.checkUpd"></span></label>
+          <label class="chk"><input type="checkbox" id="cfg-anim" /> <span data-i18n="set.anim"></span></label>
           <label class="chk"><input type="checkbox" id="cfg-demo" /> <span data-i18n="set.demo"></span></label>
         </div>
         <div class="hint" style="margin-top:6px" data-i18n="set.demoHint"></div>
@@ -549,7 +555,12 @@
         <div style="border-top:1px solid var(--border);padding-top:12px">
           <div style="font-weight:600;margin-bottom:10px" id="pj-title"></div>
           <div class="form-grid">
-            <label data-i18n="proj.path"></label><input id="pj-path" class="mono-input" placeholder="E:\work\myapp" />
+            <label data-i18n="proj.path"></label>
+            <div class="pathrow">
+              <input id="pj-path" class="mono-input" placeholder="E:workmyapp" />
+              <button id="pj-pick" data-icon="folderOpen" data-i18n-title="proj.pick"></button>
+            </div>
+            <label data-i18n="proj.server"></label><select id="pj-conn"></select>
             <label data-i18n="conn.name"></label><input id="pj-name" data-i18n-ph="proj.nameHint" />
           </div>
           <div class="hint" style="margin-top:8px" data-i18n="proj.hint"></div>

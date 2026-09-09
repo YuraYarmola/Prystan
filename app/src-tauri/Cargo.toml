@@ -19,6 +19,7 @@ tar = "0.4"
 regex = "1"
 portable-pty = "0.9"
 ureq = { version = "2", features = ["tls"] }
+rfd = "0.17"    # рідний діалог вибору теки
 
 # keyring вимагає різних бекендів на кожній платформі
 [target.'cfg(windows)'.dependencies]

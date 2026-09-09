@@ -199,6 +199,10 @@ function wireBuild() {
     $("build-modal").classList.add("open");
     setTimeout(() => $("bd-dir").focus(), 60);
   };
+  $("bd-pick").onclick = async () => {
+    const dir = await pickFolder($("bd-dir").value.trim());
+    if (dir) $("bd-dir").value = dir;
+  };
   $("bd-go").onclick = async () => {
     const dir = $("bd-dir").value.trim(), tag = $("bd-tag").value.trim();
     if (!dir || !tag) return toast(t("build.needFields"));
@@ -348,7 +352,7 @@ async function openInspect() {
         </span>
       </h3>
       <div id="env-hint" class="hint" style="display:none;margin-bottom:6px">${t("insp.envHint")}</div>
-      <pre id="env-view">${esc(envOriginal.map(maskValue).join("\n"))}</pre>
+      <pre id="env-view">${envLinesHtml()}</pre>
       <textarea id="env-edit-area" class="mono" style="display:none;width:100%;height:320px;resize:vertical"></textarea>
       <div id="env-progress" class="hint" style="display:none;margin-top:6px"></div>
       <h3>${t("lim.title")}</h3>
@@ -379,12 +383,59 @@ async function openInspect() {
     $("env-mask").onclick = () => {
       envMasked = !envMasked;
       $("env-mask").innerHTML = ic(envMasked ? "eye" : "eyeOff");
-      if (!envEditing) $("env-view").textContent = envOriginal.map(maskValue).join("\n");
+      if (!envEditing) { $("env-view").innerHTML = envLinesHtml(); wireEnvLines(); }
     };
+    wireEnvLines();
     $("env-edit").onclick = () => startEnvEdit();
     $("env-cancel").onclick = () => cancelEnvEdit();
     $("env-apply").onclick = () => applyEnvEdit();
   } catch (e) { box.innerHTML = errorBox(e); }
+}
+
+/* Кожна змінна — окремий рядок: назву й значення можна взяти окремо,
+   а не виділяти мишею з суцільного тексту. Значення копіюється справжнє,
+   навіть якщо на екрані воно замасковане. */
+function envLinesHtml() {
+  return envOriginal.map((line, i) => {
+    const shown = maskValue(line);
+    const eq = shown.indexOf("=");
+    const k = eq < 0 ? shown : shown.slice(0, eq);
+    const v = eq < 0 ? "" : shown.slice(eq + 1);
+    return `<div class="envline" data-i="${i}"><span class="ek">${esc(k)}</span>${eq < 0 ? "" : "="}<span class="ev">${esc(v)}</span>
+      <span class="ecopy">
+        <button data-c="name" title="${esc(t("env.copyName"))}">${ic("copy", "sm")} K</button>
+        <button data-c="value" title="${esc(t("env.copyValue"))}">${ic("copy", "sm")} V</button>
+      </span></div>`;
+  }).join("");
+}
+
+function envParts(i) {
+  const line = envOriginal[i] ?? "";
+  const eq = line.indexOf("=");
+  return { name: eq < 0 ? line : line.slice(0, eq), value: eq < 0 ? "" : line.slice(eq + 1), pair: line };
+}
+
+function wireEnvLines() {
+  const box = $("env-view");
+  if (!box) return;
+  box.querySelectorAll(".envline").forEach(el => {
+    const i = +el.dataset.i;
+    el.querySelectorAll("button[data-c]").forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      copyText(envParts(i)[b.dataset.c]);
+    });
+    el.ondblclick = () => copyText(envParts(i).value);
+    el.oncontextmenu = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const p = envParts(i);
+      showContextMenu(e.clientX, e.clientY, [
+        { icon: "copy", label: t("env.copyName"), run: () => copyText(p.name) },
+        { icon: "copy", label: t("env.copyValue"), run: () => copyText(p.value) },
+        { icon: "clipboard", label: t("env.copyPair"), run: () => copyText(p.pair) },
+      ]);
+    };
+  });
 }
 
 function startEnvEdit() {

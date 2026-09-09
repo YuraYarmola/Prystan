@@ -247,6 +247,21 @@ function renderConnBox() {
         }
         return c?.up ? switchConn(p.id) : connectProfile(p.id);
       };
+      chip.oncontextmenu = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const items = [...hostMenuItems(p)];
+        if (items.length) items.push("-");
+        items.push(c?.up
+          ? { icon: "power", label: t("conn.disconnect"), run: () => disconnectProfile(p.id) }
+          : { icon: "play", label: t("conn.connect"), run: () => connectProfile(p.id) });
+        if (p.id !== "local") {
+          items.push({ icon: "pencil", label: t("conn.edit"), run: () => {
+            editingProfile = p; fillProfileForm(p); renderProfileList(); $("conn-modal").classList.add("open");
+          } });
+        }
+        showContextMenu(e.clientX, e.clientY, items);
+      };
       chips.appendChild(chip);
     }
     box.appendChild(chips);

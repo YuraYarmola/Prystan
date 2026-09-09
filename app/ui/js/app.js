@@ -210,17 +210,20 @@ function renderTree() {
   renderProjectBox();
   const f = $("filter").value.toLowerCase();
   const tree = $("tree");
+  const head = $("treehead");
   tree.innerHTML = "";
+  head.innerHTML = "";
   const prof = activeProfile();
   const up = S.conns[S.activeConn]?.up;
 
-  // дашборд доступний завжди
+  // Дашборд і перемикач режимів сервера живуть у шапці над списком —
+  // вони потрібні завжди, тож не мають їхати вгору разом із контейнерами.
   const dash = document.createElement("div");
   dash.className = "section";
   dash.innerHTML = `${ic("grid")} ${t("tree.dashboard")}`;
   if (S.view === "dash") dash.style.color = "var(--text)";
   dash.onclick = () => { S.view = "dash"; S.selected = null; S.selectedStack = null; renderTree(); renderDetail(); };
-  tree.appendChild(dash);
+  head.appendChild(dash);
 
   if (!up) {
     tree.insertAdjacentHTML("beforeend", `<div class="placeholder">${t("tree.connectFirst")}</div>`);
@@ -230,8 +233,10 @@ function renderTree() {
   if (prof?.kind === "ssh") {
     const secS = document.createElement("div");
     secS.className = "section";
-    secS.innerHTML = `${t("tree.server")} <span class="cnt">${esc(prof.host)}</span>`;
-    tree.appendChild(secS);
+    secS.innerHTML = `${t("tree.server")} <span class="cnt hostcopy" title="${esc(t("conn.copyHost"))}">${esc(prof.host)}</span>`;
+    secS.querySelector(".hostcopy").onclick = e => { e.stopPropagation(); copyText(prof.host); };
+    secS.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, hostMenuItems(prof)); };
+    head.appendChild(secS);
     const row = document.createElement("div");
     row.id = "srvrow";
     for (const [tab, icon, label] of [
@@ -248,7 +253,7 @@ function renderTree() {
       b.onclick = () => { S.view = "server"; S.srvTab = tab; S.selected = null; S.selectedStack = null; renderTree(); renderDetail(); };
       row.appendChild(b);
     }
-    tree.appendChild(row);
+    head.appendChild(row);
   }
 
   // Демон недоступний: усе, що з нього читається, показувати нічим — але
@@ -411,6 +416,19 @@ function renderTree() {
 
   $("count").textContent = `${t("common.containers")}: ${S.containers.length} (${t("common.running")}: ${runN}${probN ? `, ${t("common.problems")}: ${probN}` : ""}) · ${t("common.images")}: ${S.images.length}`;
   updateBulkBar();
+}
+
+/** Пункти копіювання адреси сервера: IP, user@host і готова команда ssh. */
+function hostMenuItems(p) {
+  if (!p || p.kind === "local") return [];
+  const items = [{ icon: "copy", label: t("conn.copyHost"), run: () => copyText(p.host) }];
+  if (p.kind === "ssh") {
+    items.push({ icon: "copy", label: t("conn.copyUserHost"), run: () => copyText(`${p.user}@${p.host}`) });
+    items.push({ icon: "terminal", label: t("conn.copySsh"), run: () => copyText(`ssh ${p.port && p.port !== 22 ? "-p " + p.port + " " : ""}${p.user}@${p.host}`) });
+  } else {
+    items.push({ icon: "copy", label: "host:port", run: () => copyText(`${p.host}:${p.port}`) });
+  }
+  return items;
 }
 
 /* ═══ контекстні меню дерева ═══
@@ -1296,7 +1314,10 @@ function wireResizer() {
   armPolling();
   // повернулись у вікно — одразу підтягуємо актуальне
   document.addEventListener("visibilitychange", () => {
+    // сховане вікно не малює нічого корисного — пульси хай постоять
+    document.body.classList.toggle("hidden", document.visibilityState !== "visible");
     if (document.visibilityState === "visible") refreshContainers();
   });
+  document.body.classList.toggle("noanim", !S.cfg.animations);
   window.addEventListener("focus", () => refreshContainers());
 })();

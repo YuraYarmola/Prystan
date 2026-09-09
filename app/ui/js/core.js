@@ -79,6 +79,7 @@ const S = {
     confirmDestructive: true,
     checkUpdates: true,
     editorDock: false,    // редактор збоку, а не поверх усього
+    animations: true,     // пульс індикаторів; вимкнути — менше GPU
     leftWidth: 380,
   },
 };
