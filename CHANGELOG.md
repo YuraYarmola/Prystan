@@ -19,6 +19,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   size of the green one; chip dots are now the same size with no glow
 - The servers dashboard entry and the server mode buttons scrolled away with the
   container list; they now sit in a fixed strip above it
+- **Two monitor sessions per server.** The monitor start command is asynchronous and
+  the UI fires it for every server at once; two calls for the same host could both
+  see an empty registry, both spawn `ssh`, and only the last one was kept — the
+  first kept running unseen. Seen live: 16 monitors for 8 servers. The lock is now
+  held from the check to the insert, and a dropped handle kills its process
 
 ### Added
 - Right-click on a connection chip or the server line: copy IP, copy

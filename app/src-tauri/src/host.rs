@@ -731,19 +731,22 @@ pub async fn host_monitor_start(
     interval: Option<u32>,
 ) -> Result<(), String> {
     let interval = interval.unwrap_or(3).clamp(2, 120);
-    {
-        let mut mons = state.monitors.lock().unwrap();
-        match mons.get(&conn) {
-            // вже працює з потрібним періодом — нічого не робимо
-            Some(m) if m.interval == interval => return Ok(()),
-            Some(_) => {
-                if let Some(mut old) = mons.remove(&conn) {
-                    old.task.abort();
-                    let _ = old.child.start_kill();
-                }
+    // Замок тримаємо від перевірки до вставки в мапу. Інтерфейс запускає цю
+    // команду для всіх серверів одразу, і два паралельні виклики для одного
+    // conn обидва бачили порожню мапу: обидва запускали ssh, у мапу потрапляв
+    // останній, а перший лишався сиротою — по два монітори на сервер.
+    // Між замком і вставкою немає жодного await, тож тримати guard безпечно.
+    let mut mons = state.monitors.lock().unwrap();
+    match mons.get(&conn) {
+        // вже працює з потрібним періодом — нічого не робимо
+        Some(m) if m.interval == interval => return Ok(()),
+        Some(_) => {
+            if let Some(mut old) = mons.remove(&conn) {
+                old.task.abort();
+                let _ = old.child.start_kill();
             }
-            None => {}
         }
+        None => {}
     }
     let p = get_profile(&state, &conn)?;
     if !is_ssh(&p) {
@@ -753,6 +756,8 @@ pub async fn host_monitor_start(
     let mut cmd = ssh_command(&p);
     cmd.arg(monitor_script(interval));
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    // страховка: якщо хендл десь загубиться, процес помре разом із ним
+    cmd.kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| format!("ssh: {e}"))?;
     crate::procguard::guard(child.id().unwrap_or(0));
     let mut stdout = child.stdout.take().unwrap();
@@ -808,11 +813,7 @@ pub async fn host_monitor_start(
         let _ = app.emit("host-monitor-closed", serde_json::json!({ "conn": conn_c }));
     });
 
-    state
-        .monitors
-        .lock()
-        .unwrap()
-        .insert(conn, MonitorHandle { task, child, interval });
+    mons.insert(conn, MonitorHandle { task, child, interval });
     Ok(())
 }
 
