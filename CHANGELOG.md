@@ -7,6 +7,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Servers got stuck as "no Docker" after a dropped link.** When an SSH tunnel
+  died — laptop sleep, a network or VPN switch — the daemon check went through
+  the dead tunnel, got `client error (Connect)`, and concluded Docker was
+  missing. The connection still counted as alive, so nothing rebuilt it and the
+  state never cleared; reproduced by killing one tunnel: stuck for good, 7
+  tunnels out of 8. Now the transport is checked first: a tunnel that has exited,
+  a server that does not answer, or a daemon that works on the host but not
+  through the tunnel all count as a lost connection and trigger a reconnect. Only
+  a server that answers and really has no daemon shows "no Docker" — with the
+  actual reason: not installed, not running, or no access to the socket.
+  This regression came in with 0.2.1
+- The "no Docker" dot on a connection chip rendered as a large oval: the chip dot
+  and the notice panel in the tree shared the `.nodocker` class, so the dot
+  picked up the panel's padding. The panel now has its own class
 - Every build reported `0.1.0` in the Windows file properties: `tauri.conf.json`
   carried its own version that was never bumped alongside `Cargo.toml`. The field
   is gone and the version now has a single source

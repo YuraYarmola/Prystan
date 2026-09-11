@@ -243,6 +243,57 @@ async fn agent_exec(
     }
 }
 
+/// Діагностика, коли демон не відповів через тунель.
+///
+/// Мертвий тунель і відсутній демон виглядають для клієнта однаково —
+/// `client error (Connect)` — а лікуються по-різному: перше перепідключенням,
+/// друге лише очікуванням. Тому питаємо сам сервер через ssh-агента.
+///
+/// * `Ok(причина)` — сервер відповідає, а демона справді немає або він лежить;
+/// * `Err(..)` — зв'язку із сервером немає, або демон там працює і винен
+///   саме тунель: і те, і те лікується перепідключенням.
+pub async fn diagnose_docker(state: &AppState, conn: &str) -> Result<String, String> {
+    const SCRIPT: &str = r#"command -v docker >/dev/null 2>&1 && echo BIN
+[ -S /var/run/docker.sock ] && echo SOCK
+if command -v docker >/dev/null 2>&1; then
+  T=""; command -v timeout >/dev/null 2>&1 && T="timeout 6"
+  v=$($T docker version --format '{{.Server.Version}}' 2>&1)
+  if [ $? -eq 0 ]; then echo "UP $v"; else printf 'DOWN %s
+' "$(printf %s "$v" | head -n 3 | tr '
+' ' ')"; fi
+fi
+exit 0"#;
+    let (_, out) = agent_exec(state, conn, SCRIPT, 12)
+        .await
+        .map_err(|e| format!("сервер не відповідає: {e}"))?;
+    let text = String::from_utf8_lossy(&out);
+    let has = |tag: &str| text.lines().any(|l| l.trim() == tag);
+    if let Some(v) = text.lines().find_map(|l| l.strip_prefix("UP ")) {
+        return Err(format!(
+            "Docker {} на сервері працює, а тунель до нього — ні; перепідключаюсь",
+            v.trim()
+        ));
+    }
+    if let Some(msg) = text.lines().find_map(|l| l.strip_prefix("DOWN ")) {
+        let low = msg.to_lowercase();
+        if low.contains("permission denied") {
+            return Ok("немає доступу до сокета Docker — користувачу потрібна група docker".into());
+        }
+        if low.contains("cannot connect") || low.contains("is the docker daemon running") {
+            return Ok("Docker встановлено, але демон не запущено".into());
+        }
+        return Ok(format!(
+            "демон не відповідає: {}",
+            msg.trim().chars().take(160).collect::<String>()
+        ));
+    }
+    Ok(match (has("BIN"), has("SOCK")) {
+        (false, false) => "Docker на сервері не встановлено".into(),
+        (false, true) => "сокет Docker є, але демон не відповідає".into(),
+        _ => "демон не відповідає".into(),
+    })
+}
+
 pub fn kill_agent(state: &AppState, conn: &str) {
     if let Some(mut a) = state.agents.lock().unwrap().remove(conn) {
         a.task.abort();

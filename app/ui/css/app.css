@@ -438,14 +438,16 @@ body.resizing iframe, body.resizing .xterm { pointer-events: none; }
 }
 
 /* сервер підключено, а демон — ні */
-.nodocker { padding: 14px 12px; border-bottom: 1px solid var(--border); }
-.nodocker .nd-head {
+/* Окреме ім'я, а не .nodocker: той клас носить і крапка на чипі, і тоді
+   відступи панелі розтягували 7-піксельну крапку в овал. */
+.ndbox { padding: 14px 12px; border-bottom: 1px solid var(--border); }
+.ndbox .nd-head {
   display: flex; align-items: center; gap: 8px;
   color: var(--yellow); font-weight: 600; font-size: 12.5px;
 }
-.nodocker .nd-why { color: var(--dim); font-size: 11.5px; margin: 6px 0 0 24px; }
-.nodocker .nd-hint { color: var(--dim); font-size: 11.5px; margin: 8px 0 10px 24px; }
-.nodocker button { margin-left: 24px; }
+.ndbox .nd-why { color: var(--dim); font-size: 11.5px; margin: 6px 0 0 24px; }
+.ndbox .nd-hint { color: var(--dim); font-size: 11.5px; margin: 8px 0 10px 24px; }
+.ndbox button { margin-left: 24px; }
 
 /* демо-режим */
 .demo-badge {

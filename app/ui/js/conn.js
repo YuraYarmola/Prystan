@@ -151,8 +151,11 @@ async function probeDocker(id, manual) {
     if (manual && !info.docker_ok) toast(info.docker_error || t("conn.noDocker"), "warn", 6000);
     renderTree();
   } catch (e) {
-    // підключення зникло зовсім — це вже інша історія
-    markDown(id, String(e));
+    // Підключення зникло зовсім — це вже інша історія. Коли перевірки
+    // конкурують, друга бачить уже прибране підключення й повертає технічне
+    // «немає активного підключення» — людині це нічого не каже.
+    const msg = String(e);
+    markDown(id, /немає активного/.test(msg) ? t("conn.lost") : msg);
   }
 }
 

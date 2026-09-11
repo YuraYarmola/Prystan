@@ -449,17 +449,34 @@ async fn connect(
         k => return Err(format!("невідомий тип підключення: {k}")),
     };
 
-    // Транспорт уже працює. Демон може бути не встановлений або лежати —
-    // це окремий стан, а не причина відмовити в підключенні: файли, консоль
-    // і моніторинг сервера від Docker не залежать.
-    let probe = probe_daemon(&docker).await;
-
-    // прогріваємо файловий ssh-агент одразу, щоб перша операція була миттєвою
+    // Файловий ssh-агент піднімаємо одразу: перша операція з файлами буде
+    // миттєвою, а головне — через нього діагностуємо сервер, якщо демон мовчить.
     if profile.kind == "ssh" {
         if let Ok(a) = host::spawn_agent(&profile) {
             state.agents.lock().unwrap().insert(profile_id.clone(), a);
         }
     }
+
+    // Транспорт уже працює. Демон може бути не встановлений або лежати —
+    // це окремий стан, а не причина відмовити в підключенні: файли, консоль
+    // і моніторинг сервера від Docker не залежать. Але якщо демон на сервері
+    // працює, а через тунель не відповідає, винен тунель — тоді це помилка
+    // підключення, і інтерфейс спробує ще раз.
+    let probe = match probe_daemon(&docker).await {
+        Ok(v) => Ok(v),
+        Err(_) if profile.kind == "ssh" => match host::diagnose_docker(&state, &profile_id).await {
+            Ok(reason) => Err(reason),
+            Err(lost) => {
+                if let Some(mut t) = tunnel {
+                    procguard::release(t.id());
+                    let _ = t.kill();
+                }
+                host::kill_agent(&state, &profile_id);
+                return Err(lost);
+            }
+        },
+        Err(e) => Err(e),
+    };
 
     let events_task = probe
         .as_ref()
@@ -492,7 +509,11 @@ async fn probe_daemon(docker: &Docker) -> Result<bollard::models::SystemVersion,
 /// «client error (SendRequest)» насправді означає «сокет не відповів».
 fn clean_docker_error(raw: &str) -> String {
     let low = raw.to_lowercase();
-    if low.contains("sendrequest") || low.contains("connection refused") || low.contains("broken pipe")
+    if low.contains("sendrequest")
+        || low.contains("connection refused")
+        || low.contains("broken pipe")
+        || low.contains("(connect)")
+        || low.contains("error trying to connect")
     {
         return "демон не відповідає на сокеті — схоже, Docker не встановлено або не запущено".into();
     }
@@ -544,7 +565,43 @@ async fn docker_probe(
         .map(|c| c.docker_ok)
         .unwrap_or(false);
 
-    let probe = probe_daemon(&docker).await;
+    // Мертвий тунель і відсутній демон дають однакову помилку. Раніше перше
+    // сприймалось як друге: після сну ноутбука чи зміни мережі сервер назавжди
+    // застрягав у стані «без Docker», бо підключення формально жило й ніхто
+    // його не перебудовував. Тепер спершу перевіряємо транспорт.
+    let probe = match probe_daemon(&docker).await {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            let (via_ssh, tunnel_gone) = {
+                let mut map = state.conns.lock().unwrap();
+                let entry = map
+                    .get_mut(&conn)
+                    .ok_or_else(|| format!("немає активного підключення '{conn}'"))?;
+                let gone = entry
+                    .tunnel
+                    .as_mut()
+                    .map(|t| matches!(t.try_wait(), Ok(Some(_))))
+                    .unwrap_or(false);
+                (entry.tunnel.is_some(), gone)
+            };
+            if tunnel_gone {
+                disconnect_inner(&state, &conn);
+                return Err("ssh-тунель до сервера обірвався".into());
+            }
+            if via_ssh {
+                match host::diagnose_docker(&state, &conn).await {
+                    Ok(reason) => Err(reason),
+                    Err(lost) => {
+                        // звʼязку немає або винен сам тунель — лікується лише перепідключенням
+                        disconnect_inner(&state, &conn);
+                        return Err(lost);
+                    }
+                }
+            } else {
+                Err(e)
+            }
+        }
+    };
     let ok = probe.is_ok();
 
     // потік подій піднімаємо рівно тоді, коли демон щойно ожив

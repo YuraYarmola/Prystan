@@ -260,7 +260,7 @@ function renderTree() {
   // сам сервер лишається робочим, тому секцію вище ми не прибираємо.
   if (!S.conns[S.activeConn]?.dockerOk) {
     const box = document.createElement("div");
-    box.className = "nodocker";
+    box.className = "ndbox";
     box.innerHTML = `
       <div class="nd-head">${ic("alert")} ${t("conn.noDocker")}</div>
       <div class="nd-why">${esc(S.conns[S.activeConn]?.dockerError ?? "")}</div>
