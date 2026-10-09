@@ -143,6 +143,18 @@ jobs:
           key: ${{ matrix.target }}-cargo-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: ${{ matrix.target }}-cargo-
 
+      - name: Set up Node for UI tests
+        if: matrix.test
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: UI contract tests
+        if: matrix.test
+        working-directory: .
+        shell: bash
+        run: node --test tests/*.cjs
+
       # Тести лише на нативних цілях — крос-збірку раннер не запустить
       - name: Unit tests
         if: matrix.test
@@ -223,35 +235,40 @@ jobs:
         run: ls -lah dist/
 
       - name: Compose release notes
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.value }}
         run: |
-          cat > notes.md <<'NOTES'
-          Портативні збірки — розпакуйте й запускайте, інсталятор не потрібен.
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
 
-          ### Який файл завантажити
+          version = os.environ["RELEASE_VERSION"].removeprefix("v")
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          entry = re.search(r"^## \[" + re.escape(version) + r"\].*?\n(.*?)(?=^## \[|\Z)", changelog, re.M | re.S)
+          if not entry or not entry.group(1).strip():
+              raise SystemExit(f"Missing release notes for {version} in CHANGELOG.md")
 
-          | Ваша система | Файл |
+          downloads = """## Downloads
+
+          Portable builds: extract the archive and run Prystan. No installer is required.
+
+          | Platform | Archive |
           |---|---|
-          | **Windows 10/11 — майже всі ПК** | `Prystan-…-Windows-x64.zip` |
-          | Windows на ARM (Surface Pro X, Dev Kit) | `Prystan-…-Windows-ARM64.zip` |
-          | Windows 32-біт (старі машини) | `Prystan-…-Windows-32bit.zip` |
-          | **Mac на Apple Silicon (M1–M4)** | `Prystan-…-macOS-AppleSilicon.tar.gz` |
-          | Mac на Intel (до 2020) | `Prystan-…-macOS-Intel.tar.gz` |
-          | **Linux, 64-біт** | `Prystan-…-Linux-x64.tar.gz` |
+          | Windows 10/11, most PCs | `Prystan-v{version}-Windows-x64.zip` |
+          | Windows on ARM | `Prystan-v{version}-Windows-ARM64.zip` |
+          | Windows 32-bit | `Prystan-v{version}-Windows-32bit.zip` |
+          | macOS Apple Silicon | `Prystan-v{version}-macOS-AppleSilicon.tar.gz` |
+          | macOS Intel | `Prystan-v{version}-macOS-Intel.tar.gz` |
+          | Linux x64 | `Prystan-v{version}-Linux-x64.tar.gz` |
 
-          Якщо не впевнені — беріть **Windows-x64**: він підходить майже всім.
-          ARM-версія на звичайному ПК просто не запуститься.
-
-          Не знаєте, який у вас Mac? Меню  → «Про цей Mac»: чип M1/M2/M3/M4 —
-          беріть Apple Silicon, напис Intel — відповідно Intel.
-
-          ### Після завантаження
-
-          **Windows:** потрібен [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) — є в Windows 11 і в оновленій Windows 10.
-          **macOS:** збірки не підписані. При першому запуску `Ctrl`+клік → «Відкрити», або `xattr -dr com.apple.quarantine prystan`.
-          **Linux:** потрібні `libwebkit2gtk-4.1-0` і `libgtk-3-0`.
-
-          Повний список змін — у [CHANGELOG.md](CHANGELOG.md).
-          NOTES
+          Windows needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/).
+          macOS builds are unsigned: use Control-click → Open on first launch.
+          Linux needs `libwebkit2gtk-4.1-0` and `libgtk-3-0`.
+          """.format(version=version)
+          notes = entry.group(1).strip() + "\n\n" + downloads
+          Path("notes.md").write_text(notes, encoding="utf-8")
+          PY
 
       # gh CLI передвстановлений на раннерах; теґ створюється разом із релізом.
       # Реліз публікується одразу й позначається як Latest — саме його бачить

@@ -22,18 +22,21 @@ async function connectProfile(id, opts = {}) {
 
   S.conns[id] = { connecting: true };
   renderConnBox();
+  if (S.activeConn === id) renderTree();
   try {
     const info = await invoke("connect", { profileId: id });
     // Демон може бути не встановлений — сервер від цього не стає непридатним:
     // файли, консоль і моніторинг працюють, а Docker чекаємо окремо.
     S.conns[id] = { up: true, info, dockerOk: !!info.docker_ok, dockerError: info.docker_error };
     clearRetry(id);
+    if (S.activeConn === id) { S.loading = !!info.docker_ok; prepareNavigation(id); }
     if (opts.manual !== false) await setWanted(id, true);
     if (!opts.silent) {
       toast(info.docker_ok
         ? `${t("conn.connectedTo")}: ${p.name} (Docker ${info.version})`
         : `${p.name}: ${t("conn.noDocker")}`, info.docker_ok ? "ok" : "warn", info.docker_ok ? 3000 : 7000);
-      switchConn(id);
+      if (opts.activate !== false) switchConn(id);
+      else { renderTree(); if (S.activeConn === id) refreshAll(); }
     } else {
       renderConnBox();
       if (S.activeConn === id) refreshAll();
@@ -43,6 +46,7 @@ async function connectProfile(id, opts = {}) {
   } catch (e) {
     delete S.conns[id];
     renderConnBox();
+    if (S.activeConn === id) renderTree();
     if (!opts.silent) toast(`${p.name}: ${e}`);
     if (p.autoconnect) scheduleRetry(id);
     return false;
@@ -56,10 +60,11 @@ async function disconnectProfile(id) {
   try { await invoke("disconnect", { id }); } catch {}
   delete S.conns[id];
   if (S.activeConn === id) {
-    S.activeConn = null;
+    rememberNavigation();
     S.selected = null; S.selectedStack = null; S.view = "welcome";
-    $("engine").textContent = "";
-    $("ro-badge").style.display = "none";
+    S.containers = []; S.images = []; S.volumes = []; S.networks = [];
+    S.pending = {}; S.statsFor = null; S.loading = false;
+    renderEngineLabel();
     renderDetail();
   }
   renderTree(); renderProfileList();
@@ -97,8 +102,16 @@ function clearRetry(id) {
 /** Втратили зʼєднання (обрив тунелю / демон помер) — піднімаємо, якщо хотіли бути онлайн. */
 function markDown(id, reason) {
   if (!S.conns[id]) return;
+  if (id === S.activeConn) {
+    rememberNavigation();
+    S.selected = null; S.selectedStack = null;
+    if (!(S.view === "project" && !S.project?.remote)) S.view = "welcome";
+    S.containers = []; S.images = []; S.volumes = []; S.networks = [];
+    S.pending = {}; S.statsFor = null; S.loading = false;
+  }
   delete S.conns[id];
   renderConnBox();
+  if (id === S.activeConn) { renderEngineLabel(); renderTree(); renderDetail(); }
   const p = S.profiles.find(x => x.id === id);
   if (p?.autoconnect) {
     toast(`${p.name}: ${reason} — ${t("conn.reconnecting")}`, "warn", 4000);
@@ -172,24 +185,19 @@ async function restoreConnections() {
 }
 
 function switchConn(id) {
-  const changed = S.activeConn !== id;
+  if (!profileById(id)) return;
+  recordServerVisit(id);
+  if (S.activeConn === id) { persist(); renderTree(); refreshAll(); return; }
+  rememberNavigation();
   S.activeConn = id;
-  S.selected = null; S.selectedStack = null; S.view = "welcome";
   S.bulkSel.clear();
-  if (changed) {
-    // дані попереднього сервера більше не дійсні: інакше секунду-дві
-    // показувалися б чужі контейнери, ніби нічого й не перемкнулось
-    S.containers = []; S.images = []; S.volumes = []; S.networks = [];
-    S.pending = {};
-    S.statsFor = null;
-    S.loading = true;
-  }
+  S.containers = []; S.images = []; S.volumes = []; S.networks = [];
+  S.pending = {}; S.statsFor = null;
+  S.loading = !!S.conns[id]?.dockerOk;
+  prepareNavigation(id);
   renderEngineLabel();
   $("ro-badge").style.display = isReadonly() ? "inline-flex" : "none";
-  persist();
-  renderTree();
-  renderDetail();
-  refreshAll();
+  persist(); renderTree(); renderDetail(); refreshAll();
 }
 
 /** Підпис у шапці: версія демона або те, що його немає. */
@@ -201,75 +209,7 @@ function renderEngineLabel() {
     : t("conn.noDockerShort");
 }
 
-function renderConnBox() {
-  const box = $("connbox");
-  box.innerHTML = "";
-
-  const sec = document.createElement("div");
-  sec.className = "section";
-  const upN = Object.values(S.conns).filter(c => c.up).length;
-  sec.innerHTML = `${ic(S.connsCollapsed ? "chevronRight" : "chevronDown", "sm")} ${t("tree.connections")}` +
-    `<span class="cnt">${upN}/${S.profiles.length}</span>` +
-    `<span class="plus" title="${esc(t("tree.connections.manage"))}">${ic("plus")}</span>`;
-  sec.onclick = e => {
-    if (e.target.classList.contains("plus")) {
-      editingProfile = null; fillProfileForm(null); renderProfileList();
-      $("conn-modal").classList.add("open");
-      return;
-    }
-    S.connsCollapsed = !S.connsCollapsed;
-    persist();
-    renderConnBox();
-  };
-  box.appendChild(sec);
-
-  if (!S.connsCollapsed) {
-    const chips = document.createElement("div");
-    chips.id = "connchips";
-    for (const p of S.profiles) {
-      const c = S.conns[p.id];
-      const waiting = !!retry[p.id]?.timer;
-      const chip = document.createElement("div");
-      chip.className = "connchip" + (S.activeConn === p.id ? " active" : "") + (waiting ? " waiting" : "");
-      chip.title = (p.kind === "ssh" ? `ssh ${p.user}@${p.host}:${p.port}` : p.kind === "tcp" ? `tcp ${p.host}:${p.port}` : t("conn.localSocket"))
-        + (p.readonly ? " · read-only" : "")
-        + (c?.up ? " · " + (c.dockerOk ? t("conn.connected") : t("conn.noDockerShort"))
-           : waiting ? " · " + t("conn.reconnecting") : " · " + t("conn.clickConnect"));
-      const dotState = c?.up ? (c.dockerOk ? "up" : "nodocker")
-        : (c?.connecting || waiting) ? "connecting" : "";
-      chip.innerHTML =
-        `<span class="cdot ${dotState}"></span>` +
-        `<span class="nm">${esc(p.name)}</span>` +
-        (c?.connecting ? `<span class="spin"></span>` : "") +
-        (p.readonly ? `<span class="ro" title="read-only">${ic("lock", "sm")}</span>` : "") +
-        `<span class="pw" title="${esc(c?.up ? t("conn.disconnect") : t("conn.connect"))}">${ic(c?.up ? "power" : "play", "sm")}</span>`;
-      chip.onclick = e => {
-        if (e.target.classList.contains("pw")) {
-          e.stopPropagation();
-          return c?.up ? disconnectProfile(p.id) : connectProfile(p.id);
-        }
-        return c?.up ? switchConn(p.id) : connectProfile(p.id);
-      };
-      chip.oncontextmenu = e => {
-        e.preventDefault();
-        e.stopPropagation();
-        const items = [...hostMenuItems(p)];
-        if (items.length) items.push("-");
-        items.push(c?.up
-          ? { icon: "power", label: t("conn.disconnect"), run: () => disconnectProfile(p.id) }
-          : { icon: "play", label: t("conn.connect"), run: () => connectProfile(p.id) });
-        if (p.id !== "local") {
-          items.push({ icon: "pencil", label: t("conn.edit"), run: () => {
-            editingProfile = p; fillProfileForm(p); renderProfileList(); $("conn-modal").classList.add("open");
-          } });
-        }
-        showContextMenu(e.clientX, e.clientY, items);
-      };
-      chips.appendChild(chip);
-    }
-    box.appendChild(chips);
-  }
-}
+function renderConnBox() { renderServerSelector(); }
 
 function renderProfileList() {
   const box = $("profile-list");
@@ -290,13 +230,14 @@ function renderProfileList() {
       if (x === "con") { $("conn-modal").classList.remove("open"); connectProfile(p.id); }
       if (x === "dis") { await disconnectProfile(p.id); renderProfileList(); }
       if (x === "edit") { editingProfile = p; fillProfileForm(p); }
-      if (x === "del") { S.profiles = await invoke("delete_profile", { id: p.id }); renderTree(); renderProfileList(); }
+      if (x === "del") { S.profiles = await invoke("delete_profile", { id: p.id }); navMemory.delete(p.id); if (S.activeConn === p.id) switchConn(S.profiles[0]?.id); else renderTree(); renderProfileList(); }
     });
     box.appendChild(div);
   }
 }
 
 function fillProfileForm(p) {
+  $("conn-modal").classList.remove("adding");
   $("pf-title").textContent = p ? t("conn.edit") + ": " + p.name : t("conn.new");
   $("pf-name").value = p?.name ?? "";
   $("pf-kind").value = p?.kind === "tcp" ? "tcp" : "ssh";
@@ -319,7 +260,7 @@ function wireConnUI() {
   $("pf-save").onclick = async () => {
     const kind = $("pf-kind").value;
     const prof = {
-      id: editingProfile?.id ?? "",
+      id: editingProfile?.id ?? crypto.randomUUID(),
       name: $("pf-name").value.trim() || $("pf-host").value.trim(),
       kind,
       host: $("pf-host").value.trim(),
@@ -330,10 +271,14 @@ function wireConnUI() {
     };
     if (!prof.host) return toast(t("conn.needHost"));
     if (kind === "ssh" && !prof.user) return toast(t("conn.needUser"));
+    const adding = $("conn-modal").classList.contains("adding");
     S.profiles = await invoke("save_profile", { profile: prof });
+    syncEditorAccess();
+    renderDetail();
     editingProfile = null;
     fillProfileForm(null);
     renderTree(); renderProfileList();
+    if (adding) { $("conn-modal").classList.remove("open"); switchConn(prof.id); }
     toast(t("conn.saved"), "ok", 2500);
   };
 

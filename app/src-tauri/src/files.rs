@@ -231,28 +231,37 @@ pub async fn fs_write(
     content_b64: String,
     backup: Option<bool>,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let data = b64().decode(content_b64).map_err(|e| e.to_string())?;
+    write_file(&docker, &id, &path, data, backup.unwrap_or(false)).await
+}
 
-    // B6 — бекап попередньої версії поруч (best-effort)
-    if backup.unwrap_or(false) {
-        let _ = exec_capture(
-            &docker,
-            &id,
+pub(crate) async fn write_file(docker: &Docker, id: &str, path: &str, data: Vec<u8>, backup: bool) -> Result<(), String> {
+    // Зберігаємо права й власника файлу замість примусового 0644.
+    let original = fetch_archive(docker, id, path, MAX_VIEW * 2).await?;
+    let mut archive = tar::Archive::new(original.as_slice());
+    let mut header = archive.entries().map_err(|e| e.to_string())?
+        .next().ok_or("архів файлу порожній")?.map_err(|e| e.to_string())?.header().clone();
+    // Бекап обов'язково має завершитись перед записом.
+    if !header.entry_type().is_file() { return Err("запис доступний лише для звичайних файлів".into()); }
+    if backup {
+        let result = exec_capture(
+            docker,
+            id,
             vec![
                 "/bin/sh".into(),
                 "-c".into(),
-                format!("cp -p -- {q} {q}.bak 2>/dev/null", q = sh_quote(&path)),
+                format!("test ! -d {q}.bak && cp -p -- {q} {q}.bak && printf 'PRYSTAN_BACKUP_OK'", q = sh_quote(path)),
             ],
         )
-        .await;
+        .await?;
+        if !result.ends_with("PRYSTAN_BACKUP_OK") { return Err(format!("бекап не створено: {result}")); }
     }
-    let (dir, fname) = split_path(&path)?;
+    let (dir, fname) = split_path(path)?;
 
     let mut builder = tar::Builder::new(Vec::new());
-    let mut header = tar::Header::new_gnu();
     header.set_size(data.len() as u64);
-    header.set_mode(0o644);
+    header.set_mtime(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
     header.set_cksum();
     builder
         .append_data(&mut header, fname, data.as_slice())
@@ -261,7 +270,7 @@ pub async fn fs_write(
 
     let opts = UploadToContainerOptionsBuilder::new().path(dir).build();
     docker
-        .upload_to_container(&id, Some(opts), bollard::body_full(tar_bytes.into()))
+        .upload_to_container(id, Some(opts), bollard::body_full(tar_bytes.into()))
         .await
         .map_err(|e| e.to_string())
 }
@@ -325,7 +334,7 @@ pub async fn fs_upload(
     filename: String,
     content_b64: String,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let data = b64().decode(content_b64).map_err(|e| e.to_string())?;
 
     let mut builder = tar::Builder::new(Vec::new());
@@ -352,7 +361,7 @@ pub async fn fs_mkdir(
     id: String,
     path: String,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let out = exec_capture(
         &docker,
         &id,
@@ -380,7 +389,7 @@ pub async fn fs_delete(
     if path == "/" || path.is_empty() {
         return Err("відмова: не можна видалити корінь".into());
     }
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let out = exec_capture(
         &docker,
         &id,
@@ -407,7 +416,7 @@ pub async fn fs_create(
     path: String,
     is_dir: bool,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let q = sh_quote(&path);
     // -e щоб не перезаписати наявний файл випадково
     let script = if is_dir {
@@ -432,7 +441,7 @@ pub async fn fs_copy(
     from: String,
     to: String,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let out = exec_capture(
         &docker,
         &id,
@@ -459,7 +468,7 @@ pub async fn fs_rename(
     from: String,
     to: String,
 ) -> Result<(), String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let out = exec_capture(
         &docker,
         &id,
@@ -489,7 +498,7 @@ pub async fn fs_chmod(
     if !mode.chars().all(|c| c.is_ascii_digit()) || mode.len() < 3 || mode.len() > 4 {
         return Err("режим має бути вісімковим, напр. 644".into());
     }
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let out = exec_capture(
         &docker,
         &id,

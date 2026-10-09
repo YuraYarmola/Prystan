@@ -49,6 +49,8 @@ const S = {
   selected: null, selectedStack: null,
   tab: "logs", srvTab: "stats", stackTab: "logs",
   pending: {}, collapsed: new Map(), connsCollapsed: false,
+  navMode: "containers", serverPins: [], serverRecent: [],
+  containerDisplay: "tree", containerSort: {key:"status",dir:-1},
   quick: "all", bulkMode: false, bulkSel: new Set(),
   filesPath: {}, terms: {}, termActive: {},
   logLines: 0, errCount: 0, warnCount: 0, logFilter: "all", logWrap: true,
@@ -92,9 +94,11 @@ const projConn = () => (S.project?.remote ? S.project.conn : "local");
 const profileById = id => S.profiles.find(p => p.id === id);
 // Локальний проєкт — власні файли, read-only проду його не стосується;
 // а от проєкт на прод-сервері під read-only лишається.
-const isReadonly = () => S.view === "project"
-  ? !!(S.project?.remote && profileById(S.project.conn)?.readonly)
-  : !!activeProfile()?.readonly;
+const currentConn = () => S.view === "project" ? projConn() : S.activeConn;
+const isReadonly = (conn) => conn === undefined && S.view === "project" && !S.project?.remote
+  ? false : !!profileById(conn ?? currentConn())?.readonly;
+const targetName = conn => profileById(conn)?.name ?? conn ?? "—";
+const editorReadonly = ctx => !(ctx.target === "host" && ctx.conn === "local") && isReadonly(ctx.conn);
 const isHostView = () => S.view === "server";
 function targetKey() {
   if (S.view === "project") return "@proj:" + (S.project?.id ?? "");
@@ -108,7 +112,9 @@ function persist() {
   try {
     localStorage.setItem("da-ui", JSON.stringify({
       collapsed: [...S.collapsed], connsCollapsed: S.connsCollapsed, projCollapsed: S.projCollapsed,
-      lastConn: S.activeConn, theme: S.theme, quick: S.quick,
+      lastConn: S.activeConn, theme: S.theme, quick: S.quick, treeLayout: S.treeLayout,
+      serverPins: S.serverPins, serverRecent: S.serverRecent,
+      containerDisplay: S.containerDisplay, containerSort: S.containerSort,
       snippets: S.snippets, logWrap: S.logWrap, lang: LANG,
       cmdHistory: S.cmdHistory, termSuggest: S.termSuggest, tgAlerts: S.tgAlerts,
       tgEvents: S.tgEvents, cfg: S.cfg,
@@ -123,6 +129,11 @@ function restore() {
     if (typeof s.projCollapsed === "boolean") S.projCollapsed = s.projCollapsed;
     if (typeof s.logWrap === "boolean") S.logWrap = s.logWrap;
     if (s.quick) S.quick = s.quick;
+    if (Array.isArray(s.serverPins)) S.serverPins = [...new Set(s.serverPins.filter(x => typeof x === "string"))];
+    if (Array.isArray(s.serverRecent)) S.serverRecent = [...new Set(s.serverRecent.filter(x => typeof x === "string"))].slice(0,8);
+    S.treeLayout = s.treeLayout === "flat" ? "flat" : "grouped";
+    S.containerDisplay = s.containerDisplay === "table" ? "table" : "tree";
+    if (["name","status","cpu","ram"].includes(s.containerSort?.key) && [1,-1].includes(s.containerSort?.dir)) S.containerSort = s.containerSort;
     if (Array.isArray(s.snippets)) S.snippets = s.snippets;
     if (Array.isArray(s.cmdHistory)) S.cmdHistory = s.cmdHistory;
     if (typeof s.termSuggest === "boolean") S.termSuggest = s.termSuggest;
@@ -145,6 +156,7 @@ function setTheme(t, silent) {
     applyIcons(btn.parentElement ?? document);
   }
   if (!silent) persist();
+  S.editor?.setOption("theme", t === "dark" ? "material-darker" : "default");
   // перемалювати термінали під нову тему
   for (const list of Object.values(S.terms)) {
     for (const s of list) s.term.options.theme = termTheme();
@@ -191,9 +203,9 @@ function ask({ title, text, input = null, okLabel = null }) {
 }
 
 /* C8 — охорона для змінюючих дій на read-only профілях */
-function guardRW(whatKey = "guard.containerAction") {
-  if (isReadonly()) {
-    toast(t("common.blocked", { name: activeProfile().name, what: t(whatKey) }), "warn", 4000);
+function guardRW(whatKey = "guard.containerAction", conn) {
+  if (isReadonly(conn)) {
+    toast(t("common.blocked", { name: targetName(conn ?? currentConn()), what: t(whatKey) }), "warn", 4000);
     return false;
   }
   return true;
@@ -202,9 +214,12 @@ function guardRW(whatKey = "guard.containerAction") {
 /* ── контекстне меню ──
    items: [{ label, icon, run, danger, disabled, hint }] або "-" як роздільник */
 function showContextMenu(x, y, items) {
-  hideContextMenu();
+  const origin = document.activeElement;
+  hideContextMenu(false);
+  ctxOrigin = origin;
   const menu = document.createElement("div");
   menu.className = "ctxmenu";
+  menu.setAttribute("role","menu");
   for (const it of items) {
     if (it === "-") {
       const hr = document.createElement("div");
@@ -213,6 +228,8 @@ function showContextMenu(x, y, items) {
       continue;
     }
     const el = document.createElement("div");
+    el.setAttribute("role","menuitem"); el.setAttribute("aria-disabled",String(!!it.disabled));
+    el.tabIndex = -1;
     el.className = "ctxitem" + (it.danger ? " danger" : "") + (it.disabled ? " disabled" : "");
     el.innerHTML = `<span class="ci">${ic(it.icon ?? "")}</span><span class="cl">${esc(it.label)}</span>` +
       (it.hint ? `<span class="ch">${esc(it.hint)}</span>` : "");
@@ -231,6 +248,18 @@ function showContextMenu(x, y, items) {
   menu.style.top = Math.max(4, top) + "px";
 
   ctxOpen = true;
+  menu.addEventListener("keydown",e => {
+    const rows = [...menu.querySelectorAll(".ctxitem:not(.disabled)")];
+    const i = rows.indexOf(document.activeElement);
+    if (["ArrowDown","ArrowUp","Home","End"].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation();
+      const n = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : (i + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+      rows[n]?.focus();
+    } else if (["Enter"," "].includes(e.key)) {
+      e.preventDefault(); e.stopPropagation(); rows[i]?.click();
+    }
+  });
+  menu.querySelector(".ctxitem:not(.disabled)")?.focus({preventScroll:true});
 }
 
 /* Меню закривають слухачі, поставлені один раз на весь час життя застосунку.
@@ -240,9 +269,13 @@ function showContextMenu(x, y, items) {
    а стан тримає один прапорець.
    Перехоплюємо саме pointerdown у фазі захоплення — тоді ніякий
    stopPropagation нижче по дереву не заважає меню закритись. */
-let ctxOpen = false;
+let ctxOpen = false, ctxOrigin = null;
 
-function hideContextMenu() {
+function hideContextMenu(restoreFocus = true) {
+  if (ctxOpen && restoreFocus && document.activeElement?.closest(".ctxmenu")) {
+    if (ctxOrigin?.isConnected) ctxOrigin.focus({preventScroll:true});
+  }
+  ctxOrigin = null;
   ctxOpen = false;
   document.querySelectorAll(".ctxmenu").forEach(m => m.remove());
 }
@@ -250,7 +283,7 @@ function hideContextMenu() {
 document.addEventListener("pointerdown", e => {
   if (!ctxOpen) return;
   if (e.target instanceof Element && e.target.closest(".ctxmenu")) return; // клік по пункту
-  hideContextMenu();
+  hideContextMenu(false);
 }, true);
 document.addEventListener("keydown", e => {
   if (ctxOpen && e.key === "Escape") { e.stopPropagation(); hideContextMenu(); }

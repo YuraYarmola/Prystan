@@ -155,6 +155,18 @@ const activeSess = () => {
 const termMode = () => (S.view === "project" ? (S.project?.remote ? "host" : "local") : isHostView() ? "host" : "container");
 
 async function openTerm() {
+  const ro = isReadonly();
+  $("term-shell").style.display = termMode() === "container" ? "" : "none";
+  $("term-new").disabled = ro;
+  $("term-restart").disabled = ro;
+  if (ro) {
+    for (const list of Object.values(S.terms)) for (const sess of list) sess.div.style.display = "none";
+    $("term-overlay").querySelector(".hint").textContent = t("term.readonly");
+    $("term-overlay").style.display = "flex";
+    renderTermTabs();
+    return;
+  }
+  $("term-overlay").querySelector(".hint").textContent = t("term.closed");
   const key = targetKey();
   const list = termList(key);
   if (!list.length) await newTermSession();
@@ -164,6 +176,7 @@ async function openTerm() {
 }
 
 function showSess(idx) {
+  if (isReadonly()) return;
   const key = targetKey();
   const list = termList(key);
   if (!list[idx]) return;
@@ -217,6 +230,8 @@ function doResize(sess) {
 }
 
 async function newTermSession() {
+  const conn = currentConn();
+  if (!guardRW("tab.term")) return;
   const key = targetKey();
   const mode = termMode();
   // локальна консоль і ssh обидві живуть у ConPTY — команди в них спільні
@@ -266,7 +281,7 @@ async function newTermSession() {
   const usedShell = mode === "container" ? $("term-shell").value : "/bin/bash";
   const titles = { local: t("proj.localShell"), host: "ssh", container: usedShell.split("/").pop() };
   const sess = {
-    sid, term, fit, search, div, host, mode, dead: false,
+    sid, term, fit, search, div, host, mode, conn, dead: false,
     title: `${titles[mode]} ${list.length + 1}`,
     lastCmd: "",
     // bash/zsh і PowerShell доповнюють самі; для решти робимо своє
@@ -289,7 +304,10 @@ async function newTermSession() {
   S.termActive[key] = list.length - 1;
 
   const inputCmd = host ? "host_term_input" : "term_input";
-  const send = d => invoke(inputCmd, { sid, dataB64: strToB64(d) }).catch(() => {});
+  const send = d => {
+    if (mode !== "local" && !guardRW("tab.term", conn)) return;
+    return invoke(inputCmd, { sid, dataB64: strToB64(d) }).catch(e => toast(String(e)));
+  };
   sess.send = send;
   sess.buf = "";
   sess.ghost = "";

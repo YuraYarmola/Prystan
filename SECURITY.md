@@ -30,13 +30,16 @@ Prystan is a desktop client with a lot of reach, so it is worth knowing what it 
 | UI preferences, command history | browser `localStorage` inside the app |
 
 SSH authentication is delegated entirely to the system `ssh` client — Prystan never
-reads, stores or transmits your private keys. TLS certificates for TCP connections are
-referenced by path, not copied.
+reads, stores or transmits your private keys. TCP profiles currently use HTTP;
+client TLS certificate configuration is not implemented. Use SSH for encrypted access.
 
 ## Security-relevant design notes
 
 - **Read-only profiles.** Any profile can be marked read-only; all mutating actions are
-  blocked in the UI. Use it for production.
+  blocked by backend policy checks as well as UI guards. Interactive remote/container
+  shells and image scans are included. Local project files and local shells are
+  independent of a remote profile; Compose validation is allowed. This is an application
+  policy, not a Docker daemon authorization boundary.
 - **Secrets are masked** in the environment-variables view (keys matching
   `PASS|SECRET|TOKEN|KEY|...` and passwords inside DSN URLs) — but they are revealed on
   demand, and they are visible in `RAW JSON`. Be careful when screen-sharing.

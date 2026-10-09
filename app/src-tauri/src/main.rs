@@ -10,6 +10,7 @@ mod logs;
 mod notify;
 mod procguard;
 mod resources;
+mod recreate;
 mod security;
 mod term;
 mod update;
@@ -55,6 +56,15 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn require_writable(&self, conn: &str) -> Result<(), String> {
+        let profile = host::get_profile(self, conn)?;
+        writable_profile(&profile)
+    }
+
+    pub fn docker_write(&self, conn: &str) -> Result<Docker, String> {
+        self.require_writable(conn)?;
+        self.docker(conn)
+    }
     /// Клієнт для роботи з демоном. Якщо демон не відповідає, помилка має
     /// казати про це прямо, а не текстом транспорту на кшталт `SendRequest`.
     pub fn docker(&self, conn: &str) -> Result<Docker, String> {
@@ -76,6 +86,42 @@ impl AppState {
             .get(conn)
             .map(|c| c.docker.clone())
             .ok_or_else(|| format!("немає активного підключення '{conn}'"))
+    }
+}
+
+fn writable_profile(profile: &Profile) -> Result<(), String> {
+    if profile.readonly {
+        Err(format!("'{}': read-only — зміни заборонено", profile.name))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    #[test]
+    fn readonly_applies_to_every_docker_transport() {
+        for kind in ["local", "ssh", "tcp"] {
+            let mut p = Profile { kind: kind.into(), readonly: true, ..Default::default() };
+            assert!(writable_profile(&p).is_err());
+            p.readonly = false;
+            assert!(writable_profile(&p).is_ok());
+        }
+    }
+
+    #[test]
+    fn project_probe_includes_default_override_after_base() {
+        let name = format!("prystan-probe-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("compose.yaml"), "services: {}").unwrap();
+        std::fs::write(dir.join("compose.override.yml"), "services: {}").unwrap();
+        let result = project_probe(dir.to_string_lossy().into_owned());
+        std::fs::remove_file(dir.join("compose.yaml")).unwrap();
+        std::fs::remove_file(dir.join("compose.override.yml")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+        assert_eq!(result["compose_configs"], serde_json::json!(["compose.yaml", "compose.override.yml"]));
     }
 }
 
@@ -289,9 +335,17 @@ fn project_probe(path: String) -> serde_json::Value {
     .iter()
     .find(|f| dir.join(f).is_file())
     .map(|f| f.to_string());
+    let mut compose_configs: Vec<String> = compose.iter().cloned().collect();
+    if compose.is_some() {
+        if let Some(file) = ["compose.override.yml", "compose.override.yaml", "docker-compose.override.yml", "docker-compose.override.yaml"]
+            .iter().find(|f| dir.join(f).is_file()) {
+            compose_configs.push(file.to_string());
+        }
+    }
     serde_json::json!({
         "exists": true,
         "compose": compose,
+        "compose_configs": compose_configs,
         "dockerfile": dir.join("Dockerfile").is_file(),
         "git": dir.join(".git").exists(),
     })

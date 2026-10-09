@@ -59,7 +59,7 @@ pub async fn remove_image(
     conn: String,
     id: String,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let opts = RemoveImageOptionsBuilder::new().force(false).build();
     d.remove_image(&id, Some(opts), None)
         .await
@@ -74,7 +74,7 @@ pub async fn pull_image(
     conn: String,
     image: String,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let (name, tag) = match image.rsplit_once(':') {
         Some((n, t)) if !t.contains('/') => (n.to_string(), t.to_string()),
         _ => (image.clone(), "latest".into()),
@@ -143,7 +143,7 @@ pub async fn remove_volume(
     conn: String,
     name: String,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     d.remove_volume(&name, None::<bollard::query_parameters::RemoveVolumeOptions>)
         .await
         .map_err(|e| e.to_string())
@@ -176,7 +176,7 @@ pub async fn remove_network(
     conn: String,
     id: String,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     d.remove_network(&id).await.map_err(|e| e.to_string())
 }
 
@@ -243,7 +243,7 @@ pub async fn update_resources(
     memory_swap_mb: Option<i64>,
     cpu_shares: Option<i64>,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let mut body = bollard::models::ContainerUpdateBody::default();
 
     if let Some(c) = cpus {
@@ -372,7 +372,7 @@ pub async fn push_image(
 ) -> Result<(), String> {
     use bollard::query_parameters::PushImageOptionsBuilder;
 
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let server = registry_of(&tag);
     let creds = creds_for(&server);
     if creds.is_none() && server != "docker.io" {
@@ -495,7 +495,7 @@ pub async fn create_container(
     use bollard::query_parameters::CreateContainerOptionsBuilder;
     use std::collections::HashMap;
 
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let name = spec["name"].as_str().unwrap_or("").to_string();
     let image = spec["image"].as_str().unwrap_or_default().to_string();
     if image.is_empty() {
@@ -583,7 +583,7 @@ pub async fn create_container(
 /// Редагування env працюючого контейнера.
 /// Docker не вміє змінювати env на льоту, тому (як і плагін JetBrains)
 /// контейнер перестворюється: конфіг зберігається, змінюється лише Env.
-/// Старий контейнер перейменовується, і при будь-якій помилці все відкочується.
+/// Старий контейнер лишається до перевірки нового; помилки відновлення показуємо явно.
 #[tauri::command]
 pub async fn recreate_with_env(
     app: AppHandle,
@@ -592,148 +592,10 @@ pub async fn recreate_with_env(
     id: String,
     env: Vec<String>,
 ) -> Result<String, String> {
-    use bollard::query_parameters::{
-        CreateContainerOptionsBuilder, InspectContainerOptions, RemoveContainerOptionsBuilder,
-        RenameContainerOptions, StartContainerOptions, StopContainerOptions,
-    };
-
-    let d = state.docker(&conn)?;
-    let step = |s: &str| {
-        let _ = app.emit("recreate-progress", serde_json::json!({ "conn": conn, "line": s }));
-    };
-
-    step("читаю конфігурацію…");
-    let info = d
-        .inspect_container(&id, None::<InspectContainerOptions>)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let name = info
-        .name
-        .clone()
-        .unwrap_or_default()
-        .trim_start_matches('/')
-        .to_string();
-    if name.is_empty() {
-        return Err("не вдалося визначити ім'я контейнера".into());
-    }
-    let was_running = info
-        .state
-        .as_ref()
-        .and_then(|s| s.running)
-        .unwrap_or(false);
-    let cfg = info.config.clone().unwrap_or_default();
-
-    // мережі: зберігаємо імена й аліаси, скидаємо динамічні адреси
-    let endpoints = info
-        .network_settings
-        .as_ref()
-        .and_then(|n| n.networks.clone())
-        .map(|nets| {
-            nets.into_iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        bollard::models::EndpointSettings {
-                            aliases: v.aliases,
-                            links: v.links,
-                            ..Default::default()
-                        },
-                    )
-                })
-                .collect::<std::collections::HashMap<_, _>>()
-        })
-        .filter(|m| !m.is_empty());
-
-    let body = bollard::models::ContainerCreateBody {
-        image: cfg.image.clone(),
-        cmd: cfg.cmd.clone(),
-        entrypoint: cfg.entrypoint.clone(),
-        env: Some(env),
-        working_dir: cfg.working_dir.clone(),
-        user: cfg.user.clone(),
-        labels: cfg.labels.clone(),
-        exposed_ports: cfg.exposed_ports.clone(),
-        tty: cfg.tty,
-        open_stdin: cfg.open_stdin,
-        stdin_once: cfg.stdin_once,
-        attach_stdin: cfg.attach_stdin,
-        attach_stdout: cfg.attach_stdout,
-        attach_stderr: cfg.attach_stderr,
-        healthcheck: cfg.healthcheck.clone(),
-        hostname: cfg.hostname.clone(),
-        domainname: cfg.domainname.clone(),
-        volumes: cfg.volumes.clone(),
-        stop_signal: cfg.stop_signal.clone(),
-        stop_timeout: cfg.stop_timeout,
-        host_config: info.host_config.clone(),
-        networking_config: endpoints.map(|e| bollard::models::NetworkingConfig {
-            endpoints_config: Some(e),
-        }),
-        ..Default::default()
-    };
-
-    if was_running {
-        step("зупиняю контейнер…");
-        d.stop_container(&id, None::<StopContainerOptions>)
-            .await
-            .map_err(|e| format!("stop: {e}"))?;
-    }
-
-    let backup_name = format!("{name}__da_old");
-    step("резервую старий контейнер…");
-    d.rename_container(&id, RenameContainerOptions { name: backup_name.clone() })
-        .await
-        .map_err(|e| format!("rename: {e}"))?;
-
-    // відкат: повертаємо ім'я і, якщо треба, запускаємо
-    async fn rollback(
-        d: &bollard::Docker,
-        id: &str,
-        name: &str,
-        was_running: bool,
-    ) {
-        use bollard::query_parameters::{RenameContainerOptions, StartContainerOptions};
-        let _ = d
-            .rename_container(id, RenameContainerOptions { name: name.to_string() })
-            .await;
-        if was_running {
-            let _ = d.start_container(id, None::<StartContainerOptions>).await;
-        }
-    }
-
-    step("створюю новий контейнер…");
-    let opts = CreateContainerOptionsBuilder::new().name(&name).build();
-    let created = match d.create_container(Some(opts), body).await {
-        Ok(c) => c,
-        Err(e) => {
-            rollback(&d, &id, &name, was_running).await;
-            return Err(format!("create: {e} (зміни відкочено)"));
-        }
-    };
-
-    if was_running {
-        step("запускаю…");
-        if let Err(e) = d
-            .start_container(&created.id, None::<StartContainerOptions>)
-            .await
-        {
-            let ropts = RemoveContainerOptionsBuilder::new().force(true).build();
-            let _ = d.remove_container(&created.id, Some(ropts)).await;
-            rollback(&d, &id, &name, was_running).await;
-            return Err(format!("start: {e} (зміни відкочено)"));
-        }
-    }
-
-    step("прибираю старий контейнер…");
-    let ropts = RemoveContainerOptionsBuilder::new().force(true).v(false).build();
-    if let Err(e) = d.remove_container(&id, Some(ropts)).await {
-        // новий уже працює — старий лишається як резерв
-        step(&format!("увага: старий контейнер {backup_name} не видалено: {e}"));
-    }
-
-    step("готово ✓");
-    Ok(created.id)
+    let d = state.docker_write(&conn)?;
+    crate::recreate::recreate(&d, &id, env, |line| {
+        let _ = app.emit("recreate-progress", serde_json::json!({ "conn": conn, "id": id, "line": line }));
+    }).await
 }
 
 /// B8 — build образу з локальної теки (тар-контекст → Engine API).
@@ -748,7 +610,7 @@ pub async fn build_image(
 ) -> Result<(), String> {
     use bollard::query_parameters::BuildImageOptionsBuilder;
 
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let dir = std::path::PathBuf::from(&context_dir);
     if !dir.is_dir() {
         return Err(format!("тека не знайдена: {context_dir}"));
@@ -894,7 +756,7 @@ pub async fn prune(
     conn: String,
     what: String,
 ) -> Result<String, String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     match what.as_str() {
         "containers" => {
             let r = d

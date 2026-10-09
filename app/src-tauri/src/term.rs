@@ -31,7 +31,7 @@ pub async fn term_open(
     id: String,
     shell: String,
 ) -> Result<String, String> {
-    let docker = state.docker(&conn)?;
+    let docker = state.docker_write(&conn)?;
     let sh = if shell.is_empty() { "/bin/sh".into() } else { shell };
 
     let exec = docker
@@ -99,13 +99,14 @@ pub async fn term_input(
     sid: String,
     data_b64: String,
 ) -> Result<(), String> {
-    let input = state
+    let (conn, input) = state
         .terms
         .lock()
         .unwrap()
         .get(&sid)
-        .map(|t| t.input.clone())
+        .map(|t| (t.conn.clone(), t.input.clone()))
         .ok_or("сесію терміналу не знайдено")?;
+    state.require_writable(&conn)?;
     let bytes = b64().decode(data_b64).map_err(|e| e.to_string())?;
     let mut guard = input.lock().await;
     guard.write_all(&bytes).await.map_err(|e| e.to_string())?;

@@ -5,6 +5,7 @@
 
 /** Перемалювати вміст відкритої панелі після оновлення даних. */
 function repaintView() {
+  if (S.view === "containers") renderContainerTable();
   if (S.view === "images") renderImages();
   if (S.view === "volumes") renderVolumes();
   if (S.view === "networks") renderNetworks();
@@ -55,7 +56,9 @@ async function refreshAll(opts = {}) {
     S.containers = c; S.images = i; S.volumes = v; S.networks = n;
     S.loading = false;
     clearSettledPending();
+    const restored = restorePendingNavigation(conn);
     renderTree();
+    if (restored) renderDetail();
     repaintView();
   } catch (e) {
     if (seq !== refreshSeq || conn !== S.activeConn) return;
@@ -78,9 +81,11 @@ async function refreshContainers() {
     const changed = containersSig(list) !== containersSig(S.containers);
     S.containers = list;
     clearSettledPending();
-    if (changed) { renderTree(); repaintView(); }
+    const restored = restorePendingNavigation(conn);
+    if (restored) S.loading = false;
+    if (changed || restored) { renderTree(); if (restored) renderDetail(); repaintView(); }
     else if (Object.keys(S.pending).length) renderTree();
-  } catch (e) { connLost(e); }
+  } catch (e) { if (conn === S.activeConn) connLost(e); }
 }
 
 const containersSig = list => list.map(c => c.id + c.state + c.status).join("|");
@@ -201,13 +206,34 @@ function groupContainers(rows) {
   });
 }
 function isCollapsed(project, rows) {
-  if (S.collapsed.has(project)) return S.collapsed.get(project);
+  const key = groupCollapseKey(project);
+  if (S.collapsed.has(key)) return S.collapsed.get(key);
   return !rows.some(c => c.state === "running" || c.id === S.selected?.id);
 }
 
 function renderTree() {
+  const tree = $("tree"), projects = $("projbox");
+  const scroll = navScrollRestore ?? (S.navMode === "projects" ? projects : tree).scrollTop;
+  const focus = document.activeElement?.closest("[data-navkey]");
+  const key = focus?.dataset.navkey;
+  const button = document.activeElement?.dataset?.navbutton;
+  const oldCursor = S.treeItems[S.cursor]?.el.dataset.navkey;
+  renderTreeContent();
+  if (S.view === "containers") renderContainerTable();
+  if (oldCursor) S.cursor = S.treeItems.findIndex(it => it.el.dataset.navkey === oldCursor);
+  applyCursor();
+  (S.navMode === "projects" ? projects : tree).scrollTop = scroll;
+  navScrollRestore = null;
+  if (key) {
+    const row = [...document.querySelectorAll("[data-navkey]")].find(el => el.dataset.navkey === key);
+    (button ? row?.querySelector('[data-navbutton="' + button + '"]') : row)?.focus({preventScroll:true});
+  }
+}
+function renderTreeContent() {
   renderConnBox();
   renderProjectBox();
+  renderNavigation();
+  S.treeItems = [];
   const f = $("filter").value.toLowerCase();
   const tree = $("tree");
   const head = $("treehead");
@@ -215,47 +241,38 @@ function renderTree() {
   head.innerHTML = "";
   const prof = activeProfile();
   const up = S.conns[S.activeConn]?.up;
+  updateBulkBar();
+  if (!up) $("count").textContent = t("conn.disconnected");
 
-  // Дашборд і перемикач режимів сервера живуть у шапці над списком —
-  // вони потрібні завжди, тож не мають їхати вгору разом із контейнерами.
-  const dash = document.createElement("div");
-  dash.className = "section";
-  dash.innerHTML = `${ic("grid")} ${t("tree.dashboard")}`;
-  if (S.view === "dash") dash.style.color = "var(--text)";
-  dash.onclick = () => { S.view = "dash"; S.selected = null; S.selectedStack = null; renderTree(); renderDetail(); };
-  head.appendChild(dash);
-
+  if (S.navMode === "projects") return;
   if (!up) {
-    tree.insertAdjacentHTML("beforeend", `<div class="placeholder">${t("tree.connectFirst")}</div>`);
+    tree.innerHTML = `<div class="nav-empty"><div>${esc(t("tree.connectFirst"))}</div><button id="nav-connect" class="primary">${ic("play")} ${esc(t("conn.connect"))}</button></div>`;
+    $("nav-connect").disabled = !prof || !!S.conns[S.activeConn]?.connecting;
+    $("nav-connect").onclick = () => connectProfile(S.activeConn);
     return;
   }
-
-  if (prof?.kind === "ssh") {
-    const secS = document.createElement("div");
-    secS.className = "section";
-    secS.innerHTML = `${t("tree.server")} <span class="cnt hostcopy" title="${esc(t("conn.copyHost"))}">${esc(prof.host)}</span>`;
-    secS.querySelector(".hostcopy").onclick = e => { e.stopPropagation(); copyText(prof.host); };
-    secS.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); showContextMenu(e.clientX, e.clientY, hostMenuItems(prof)); };
-    head.appendChild(secS);
+  if (S.navMode === "server") {
+    if (prof?.kind !== "ssh") {
+      tree.innerHTML = `<div class="nav-empty">${esc(t("nav.sshTools"))}</div>`;
+      return;
+    }
     const row = document.createElement("div");
-    row.id = "srvrow";
+    row.className = "server-tools";
     for (const [tab, icon, label] of [
-      ["stats", "activity", t("tree.stats")],
-      ["proc", "cpu", t("tree.proc")],
-      ["files", "folder", t("tree.hostFiles")],
-      ["du", "pieChart", t("du.title")],
-      ["term", "terminal", t("tree.hostTerm")],
+      ["stats","activity",t("tree.stats")], ["proc","cpu",t("tree.proc")],
+      ["files","folder",t("tree.hostFiles")], ["du","pieChart",t("du.title")],
+      ["term","terminal",t("tree.hostTerm")]
     ]) {
       const b = document.createElement("button");
-      b.className = S.view === "server" && S.srvTab === tab ? "sel" : "";
-      b.title = label;
-      b.innerHTML = ic(icon, "big");
-      b.onclick = () => { S.view = "server"; S.srvTab = tab; S.selected = null; S.selectedStack = null; renderTree(); renderDetail(); };
+      b.className = S.view === "server" && S.srvTab === tab ? "on" : "";
+      b.innerHTML = ic(icon) + " " + esc(label);
+      b.setAttribute("aria-pressed",String(S.view === "server" && S.srvTab === tab));
+      b.onclick = () => { S.view = "server"; S.srvTab = tab; renderTree(); renderDetail(); };
       row.appendChild(b);
     }
-    head.appendChild(row);
+    tree.appendChild(row);
+    return;
   }
-
   // Демон недоступний: усе, що з нього читається, показувати нічим — але
   // сам сервер лишається робочим, тому секцію вище ми не прибираємо.
   if (!S.conns[S.activeConn]?.dockerOk) {
@@ -283,8 +300,24 @@ function renderTree() {
   const runN = S.containers.filter(c => c.state === "running").length;
   const probN = S.containers.filter(isProblem).length;
   secC.innerHTML = `${t("tree.containers")} <span class="cnt">${
-    probN ? `<span style="color:var(--red)">${ic("alert", "sm")} ${probN}</span> · ` : ""}${runN}/${S.containers.length}</span>`;
-  tree.appendChild(secC);
+    probN ? `<span style="color:var(--red)">${ic("alert", "sm")} ${probN}</span> · ` : ""}${runN}/${S.containers.length}</span><button id="nav-table" class="ghost${S.view === "containers" ? " on" : ""}" aria-pressed="${S.view === "containers"}" title="${esc(t("ct.table"))}">${ic("grid")} ${esc(t("ct.table"))}</button>`;
+  head.appendChild(secC);
+  $("nav-table").onclick = () => S.view === "containers" ? returnToContainerTree() : openContainerTable();
+  const tools = document.createElement("div");
+  tools.className = "container-tools";
+  tools.innerHTML = `<button id="nav-create" class="primary">${ic("plus")} ${esc(t("nav.addContainer"))}</button>
+    <button id="nav-layout" aria-pressed="${S.treeLayout === "flat"}" title="${esc(t("nav.layout"))}">${ic(S.treeLayout === "flat" ? "list" : "layers")} ${esc(t(S.treeLayout === "flat" ? "nav.flat" : "nav.grouped"))}</button>
+    <button id="nav-fold" aria-label="${esc(t("nav.fold"))}" title="${esc(t("nav.fold"))}">${ic("chevronRight")}</button>`;
+  head.appendChild(tools);
+  $("nav-create").disabled = isReadonly(S.activeConn);
+  $("nav-create").onclick = openCreateModal;
+  $("nav-layout").onclick = () => { S.treeLayout = S.treeLayout === "flat" ? "grouped" : "flat"; persist(); renderTree(); };
+  $("nav-fold").disabled = S.treeLayout === "flat";
+  $("nav-fold").onclick = () => {
+    const groups = groupContainers(S.containers).filter(([p]) => p);
+    const fold = groups.some(([p,rows]) => !isCollapsed(p,rows));
+    groups.forEach(([p]) => setGroupCollapsed(p,fold)); persist(); renderTree();
+  };
 
   // перше завантаження після підключення — показуємо, що дані вже їдуть
   if (S.loading && !S.containers.length) {
@@ -296,7 +329,12 @@ function renderTree() {
   const shown = S.containers.filter(c => passQuick(c) && matchesFilter(c, f));
   S.treeItems = [];
 
-  for (const [project, rows] of groupContainers(shown)) {
+  const groups = S.treeLayout === "flat" ? [["", [...shown].sort((a,b) => (b.state === "running") - (a.state === "running") || a.name.localeCompare(b.name))]] : groupContainers(shown);
+  if (!shown.length) {
+    tree.innerHTML = `<div class="nav-empty">${esc(t(S.containers.length ? "nav.noContainers" : "nav.emptyContainers"))}${S.containers.length ? `<button id="nav-clear">${esc(t("nav.clearFilters"))}</button>` : ""}</div>`;
+    if ($("nav-clear")) $("nav-clear").onclick = () => { $("filter").value = ""; S.quick = "all"; navScrollRestore = 0; persist(); renderTree(); };
+  }
+  for (const [project, rows] of groups) {
     const running = rows.filter(c => c.state === "running").length;
     const collapsed = project && !f && S.quick === "all" ? isCollapsed(project, rows) : false;
 
@@ -304,38 +342,27 @@ function renderTree() {
       const g = document.createElement("div");
       g.className = "group" + (S.view === "stack" && S.selectedStack?.project === project ? " sel" : "");
       g.innerHTML = `
-        <span class="tri">${ic(collapsed ? "chevronRight" : "chevronDown", "sm")}</span>
-        <span class="gname">${ic("layers")} ${esc(project)} <span class="stack">compose</span></span>
-        <span class="gacts">
-          <button data-g="start" title="${esc(t("bulk.start"))}">${ic("play")}</button>
-          <button data-g="stop" title="${esc(t("bulk.stop"))}">${ic("stop")}</button>
-          <button data-g="open" title="${esc(t("ctr.stackActions"))}">${ic("settings")}</button>
-        </span>
-        <span class="gcount">${running ? `<b>${running}</b>/` : ""}${rows.length}</span>`;
-      g.onclick = async e => {
-        const ga = e.target.dataset?.g;
-        if (ga === "open") { e.stopPropagation(); return selectStack(project, rows); }
-        if (ga) {
-          e.stopPropagation();
-          if (!guardRW("guard.groupAction")) return;
-          const targets = ga === "start" ? rows.filter(c => c.state !== "running") : rows.filter(c => c.state === "running");
-          if (!targets.length) return;
-          targets.forEach(markPending);
-          renderTree();
-          const rs = await Promise.allSettled(targets.map(c => invoke("container_action", { conn: S.activeConn, id: c.id, action: ga })));
-          const fails = rs.filter(r => r.status === "rejected");
-          if (fails.length) toast(t("common.errors", { n: fails.length }) + ` · ${fails[0].reason}`);
-          scheduleRefresh();
-          return;
+        <button class="tri" data-navbutton="fold" aria-label="${esc(t(collapsed ? "nav.expand" : "nav.collapse"))}" aria-expanded="${!collapsed}">${ic(collapsed ? "chevronRight" : "chevronDown", "sm")}</button>
+        <span class="gname">${ic("layers")} ${esc(project)}</span>
+        <span class="gcount">${running ? `<b>${running}</b>/` : ""}${rows.length}</span>
+        <button class="row-menu" data-navbutton="menu" aria-label="${esc(t("nav.actions"))}">${ic("more")}</button>`;
+      g.tabIndex = 0; g.dataset.navkey = "stack:" + project;
+      g.setAttribute("role","treeitem"); g.setAttribute("aria-expanded",String(!collapsed));
+      g.setAttribute("aria-selected",String(S.view === "stack" && S.selectedStack?.project === project));
+      g.onfocus = () => { S.cursor = S.treeItems.findIndex(it => it.el === g); applyCursor(); };
+      g.title = project;
+      g.onclick = e => {
+        if (e.target.closest(".tri")) { setGroupCollapsed(project,!collapsed); persist(); renderTree(); return; }
+        if (e.target.closest(".row-menu")) {
+          const r = e.target.closest("button").getBoundingClientRect();
+          showContextMenu(r.left,r.bottom,stackMenuItems(project,S.containers.filter(c => c.project === project))); return;
         }
-        S.collapsed.set(project, !collapsed);
-        persist();
-        renderTree();
+        selectStack(project,S.containers.filter(c => c.project === project));
       };
       g.oncontextmenu = e => {
         e.preventDefault();
         e.stopPropagation();
-        showContextMenu(e.clientX, e.clientY, stackMenuItems(project, rows));
+        showContextMenu(e.clientX, e.clientY, stackMenuItems(project, S.containers.filter(c => c.project === project)));
       };
       tree.appendChild(g);
       S.treeItems.push({ el: g, kind: "group", project, rows, collapsed });
@@ -359,30 +386,20 @@ function renderTree() {
             loops ? `<span class="loopbadge" title="${esc(t("ctr.crashLoop", { name: c.name, n: loops }))}">${ic("rotate", "sm")}${loops}</span>` : ""}</div>
           <div class="sub">${esc(c.image)} · ${esc(c.status)}</div>
         </div>
-        <div class="acts">
-          ${ports.length && c.state === "running" ? `<button data-a="open" title="${esc(t("ctr.openBrowser"))} ${esc(ports[0])}">${ic("globe")}</button>` : ""}
-          ${c.state === "running"
-            ? `<button data-a="stop" title="stop">${ic("stop")}</button><button data-a="restart" title="restart">${ic("rotate")}</button>`
-            : `<button data-a="start" title="start">${ic("play")}</button><button data-a="rm" title="${esc(t("common.delete"))}" class="danger">${ic("trash")}</button>`}
-        </div>`;
-      row.onclick = async e => {
+        <button class="row-menu" data-navbutton="menu" aria-label="${esc(t("nav.actions") + ": " + c.name)}">${ic("more")}</button>`;
+      row.tabIndex = 0; row.dataset.navkey = "container:" + c.id;
+      row.setAttribute("role","treeitem");
+      row.setAttribute("aria-selected",String(S.view === "container" && S.selected?.id === c.id));
+      row.title = c.name + "\n" + c.image + "\n" + c.status;
+      row.onfocus = () => { S.cursor = S.treeItems.findIndex(it => it.el === row); applyCursor(); };
+      row.onclick = e => {
         if (e.target.classList.contains("cb")) {
           if (e.target.checked) S.bulkSel.add(c.id); else S.bulkSel.delete(c.id);
-          updateBulkBar();
-          return;
+          updateBulkBar(); return;
         }
-        const a = e.target.closest("[data-a]")?.dataset?.a;
-        if (a === "open") {
-          e.stopPropagation();
-          if (ports.length === 1) return openContainerPort(c, ports[0]);
-          return showContextMenu(e.clientX, e.clientY, ports.map(p => ({
-            icon: "globe", label: p, run: () => openContainerPort(c, p),
-          })));
-        }
-        if (a) {
-          if (!guardRW("guard.containerAction")) return;
-          if (a === "rm" && !(await confirmDanger(t("ctr.deleteQ"), t("ctr.deleteText", { name: esc(c.name) })))) return;
-          return act(c, a);
+        if (e.target.closest(".row-menu")) {
+          const r = e.target.closest("button").getBoundingClientRect();
+          showContextMenu(r.left,r.bottom,containerMenuItems(c)); return;
         }
         selectContainer(c);
       };
@@ -397,22 +414,6 @@ function renderTree() {
   }
 
   applyCursor();
-
-  for (const [label, view, count, icon] of [
-    [t("top.title"), "top", "", "activity"],
-    [t("tree.images"), "images", S.images.length, "image"],
-    [t("tree.volumes"), "volumes", S.volumes.length, "database"],
-    [t("tree.networks"), "networks", S.networks.length, "network"],
-    [t("tree.disk"), "df", "", "hardDrive"],
-    [t("tree.journal"), "journal", "", "history"],
-  ]) {
-    const s = document.createElement("div");
-    s.className = "section";
-    s.innerHTML = `${ic(icon)} ${label} <span class="cnt">${count}</span>`;
-    if (S.view === view) s.style.color = "var(--text)";
-    s.onclick = () => { S.view = view; S.selected = null; S.selectedStack = null; renderTree(); renderDetail(); };
-    tree.appendChild(s);
-  }
 
   $("count").textContent = `${t("common.containers")}: ${S.containers.length} (${t("common.running")}: ${runN}${probN ? `, ${t("common.problems")}: ${probN}` : ""}) · ${t("common.images")}: ${S.images.length}`;
   updateBulkBar();
@@ -443,7 +444,7 @@ function containerMenuItems(c) {
   const run = c.state === "running";
   const ro = isReadonly();
   const ports = portsOf(c);
-  const open = tab => { selectContainer(c); S.tab = tab; renderDetail(); };
+  const open = tab => { S.tab = tab; selectContainer(c); };
   const items = [
     { icon: "list", label: t("tab.logs"), run: () => open("logs") },
     { icon: "terminal", label: t("tab.term"), disabled: !run, run: () => open("term") },
@@ -527,6 +528,7 @@ function moveCursor(delta) {
     S.cursor = Math.max(0, Math.min(items.length - 1, S.cursor + delta));
   }
   applyCursor();
+  S.treeItems[S.cursor]?.el.focus({preventScroll:true});
   S.treeItems[S.cursor]?.el.scrollIntoView({ block: "nearest" });
 }
 
@@ -543,7 +545,14 @@ function wireTreeKeys() {
     const fromFilter = el?.id === "filter";
     if (typing && !(fromFilter && ["ArrowDown", "ArrowUp", "Enter"].includes(e.key))) return;
 
+    if (e.defaultPrevented || e.altKey || S.navMode !== "containers" || (!fromFilter && !el?.closest("#tree"))) return;
+    if (el?.closest("button") && ["Enter"," "].includes(e.key)) return;
     const it = cursorItem();
+    if (it && (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))) {
+      e.preventDefault(); const r = it.el.getBoundingClientRect();
+      showContextMenu(r.left + 20,r.bottom,it.kind === "row" ? containerMenuItems(it.c) : stackMenuItems(it.project,S.containers.filter(c => c.project === it.project)));
+      return;
+    }
     switch (e.key) {
       case "ArrowDown": e.preventDefault(); moveCursor(1); break;
       case "ArrowUp": e.preventDefault(); moveCursor(-1); break;
@@ -551,13 +560,13 @@ function wireTreeKeys() {
         if (!it) return;
         e.preventDefault();
         if (it.kind === "row") selectContainer(it.c);
-        else selectStack(it.project, it.rows);
+        else selectStack(it.project, S.containers.filter(c => c.project === it.project));
         break;
       case "ArrowRight":
-        if (it?.kind === "group" && it.collapsed) { e.preventDefault(); S.collapsed.set(it.project, false); persist(); renderTree(); }
+        if (it?.kind === "group" && it.collapsed) { e.preventDefault(); setGroupCollapsed(it.project, false); persist(); renderTree(); }
         break;
       case "ArrowLeft":
-        if (it?.kind === "group" && !it.collapsed) { e.preventDefault(); S.collapsed.set(it.project, true); persist(); renderTree(); }
+        if (it?.kind === "group" && !it.collapsed) { e.preventDefault(); setGroupCollapsed(it.project, true); persist(); renderTree(); }
         break;
       case " ":
         if (it?.kind === "row" && S.bulkMode) {
@@ -624,11 +633,15 @@ function wireBulk() {
 
 /* ═══ роутер ═══ */
 function selectContainer(c) {
+  if (S.navMode !== "containers") rememberNavigation();
+  pendingNavigation = null; S.navMode = "containers";
   if (S.selected?.id !== c.id) S.statsFor = null;  // новий контейнер — новий стрім
   S.selected = c; S.selectedStack = null; S.view = "container";
   renderTree(); renderDetail();
 }
 function selectStack(project, rows) {
+  if (S.navMode !== "containers") rememberNavigation();
+  pendingNavigation = null; S.navMode = "containers";
   S.selectedStack = { project, rows };
   S.selected = null; S.view = "stack";
   renderTree(); renderDetail();
@@ -639,9 +652,25 @@ const S_TABS = () => [["stats", t("tab.overview")], ["proc", t("tab.proc")], ["f
 const K_TABS = () => [["logs", t("tab.stackLogs")], ["compose", t("tab.compose")]];
 const P_TABS = () => [["files", t("tab.files")], ["term", t("tab.term")], ["compose", t("tab.compose")], ["du", t("du.title")]];
 
-const DOCKER_VIEWS = ["container", "stack", "images", "volumes", "networks", "df", "top", "dash"];
+const DOCKER_VIEWS = ["containers", "container", "stack", "images", "volumes", "networks", "df", "top", "dash"];
+
+function renderTargetContext() {
+  const conn = currentConn(), box = $("target-context");
+  if (["welcome", "dash"].includes(S.view)) { box.innerHTML = ""; return; }
+  const localProject = S.view === "project" && !S.project?.remote;
+  const name = localProject ? t("context.local") : targetName(conn);
+  const object = S.view === "project" ? S.project?.name : S.view === "container" ? S.selected?.name : S.view === "stack" ? S.selectedStack?.project : "";
+  box.innerHTML = `${ic(localProject ? "folderCode" : "server", "sm")}<span class="context-name">${esc(name)}</span>
+    ${object ? `<span>›</span><span class="context-name">${esc(object)}</span>` : ""}
+    ${isReadonly() ? `<span class="badge ro">${ic("lock")} ${esc(t("context.readonly"))}</span>` : ""}`;
+}
 
 function renderDetail() {
+  rememberContainerTableScroll();
+  if (["container","stack","server","project"].includes(S.view) && S.navMode !== viewMode(S.view)) {
+    S.navMode = viewMode(S.view); renderTree();
+  }
+  renderNavigation();
   const tabs = $("tabs");
   document.querySelectorAll(".pane").forEach(p => p.classList.remove("active"));
   $("welcome").style.display = "none";
@@ -654,6 +683,9 @@ function renderDetail() {
     S.view = activeProfile()?.kind === "ssh" ? "server" : "welcome";
   }
   syncMonitor();
+  if (S.view === "server" && S.navMode !== "server") { S.navMode = "server"; renderTree(); }
+  syncContainerTable();
+  renderTargetContext();
 
   const show = (id, fn) => { $(id).classList.add("active"); fn?.(); };
 
@@ -725,9 +757,10 @@ function renderDetail() {
   }
 
   tabs.style.display = "none";
-  const hdr = { images: t("tree.images"), volumes: t("tree.volumes"), networks: t("tree.networks"), df: t("df.title"), dash: t("pal.dashboard"), journal: t("tree.journal"), top: t("top.title") };
+  const hdr = { containers: t("ct.title"), images: t("tree.images"), volumes: t("tree.volumes"), networks: t("tree.networks"), df: t("df.title"), dash: t("pal.dashboard"), journal: t("tree.journal"), top: t("top.title") };
   $("detail-header").dataset.sig = "";
   $("detail-header").innerHTML = `<span class="title">${hdr[S.view] ?? ""}</span>`;
+  if (S.view === "containers") show("pane-containers", renderContainerTable);
   if (S.view === "top") show("pane-top", openTop);
   if (S.view === "images") show("pane-images", renderImages);
   if (S.view === "volumes") show("pane-volumes", renderVolumes);
@@ -751,7 +784,8 @@ function headerSig() {
 
 function renderDetailHeader(force) {
   const h = $("detail-header");
-  const sig = headerSig();
+  renderTargetContext();
+  const sig = headerSig() + ":" + S.activeConn + ":" + isReadonly() + ":" + LANG;
   if (!force && sig && h.dataset.sig === sig) {
     // стан не змінився — оновлювати DOM не треба
     ensureStats();
@@ -770,6 +804,7 @@ function renderDetailHeader(force) {
       <button data-s="start" title="${esc(t("bulk.start"))}">${ic("play")} ${t("ctr.startAll")}</button>
       <button data-s="stop" title="${esc(t("bulk.stop"))}">${ic("stop")} ${t("ctr.stopAll")}</button>
       <button data-s="restart" title="${esc(t("bulk.restart"))}">${ic("rotate")} ${t("ctr.restartAll")}</button>`;
+    h.querySelectorAll("button").forEach(b => { b.disabled = isReadonly(); });
     h.querySelectorAll("button").forEach(b => b.onclick = async () => {
       if (!guardRW("guard.groupAction")) return;
       const a = b.dataset.s;
@@ -801,6 +836,7 @@ function renderDetailHeader(force) {
       ? `<button data-a="unpause">${ic("play")} ${t("ctr.unpause")}</button>`
       : `<button data-a="start" class="primary">${ic("play")} ${t("ctr.start")}</button>`}
     <button data-a="rm" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>`;
+  h.querySelectorAll("button[data-a]").forEach(b => { b.disabled = b.dataset.a !== "open" && isReadonly(); });
   h.querySelectorAll("button").forEach(b => b.onclick = async ev => {
     const a = b.dataset.a;
     if (a === "open") {
@@ -850,7 +886,7 @@ function renderWelcome() {
   box.querySelectorAll("[data-w]").forEach(el => el.onclick = () => {
     const w = el.dataset.w;
     if (w === "local") connectProfile("local");
-    if (w === "server") { editingProfile = null; fillProfileForm(null); renderProfileList(); $("conn-modal").classList.add("open"); }
+    if (w === "server") openConnectionManager(null,true);
     if (w === "project") openProjectModal();
     if (w === "palette") openPalette();
     if (w === "keys") showShortcuts();
@@ -863,6 +899,9 @@ const SHORTCUTS = () => [
   ["/", t("keys.filter")],
   ["↑ ↓ · Enter", t("keys.tree")],
   ["← →", t("keys.fold")],
+  ["Alt+↑ / Alt+↓", t("nav.servers")],
+  ["Alt+S", t("nav.chooseServer")],
+  ["Shift+F10", t("nav.actions")],
   ["Ctrl+R", t("pal.refreshAll")],
   ["Del", t("keys.del")],
   ["F2", t("files.rename")],
@@ -1184,7 +1223,7 @@ function wireGlobal() {
     });
   });
 
-  $("filter").oninput = renderTree;
+  $("filter").oninput = () => { S.cursor = -1; navScrollRestore = 0; if (S.view === "containers") resetContainerTableScroll(); renderTree(); };
   $("refresh").onclick = () => refreshAll();
   $("theme-btn").onclick = () => setTheme(S.theme === "dark" ? "light" : "dark");
   $("lang-sel").onchange = e => setLang(e.target.value);
@@ -1206,7 +1245,8 @@ function wireGlobal() {
     ]);
   });
   $("quick-filter").querySelectorAll("button").forEach(b => b.onclick = () => {
-    S.quick = b.dataset.q;
+    S.quick = b.dataset.q; S.cursor = -1; navScrollRestore = 0;
+    if (S.view === "containers") resetContainerTableScroll();
     $("quick-filter").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
     persist();
     renderTree();
@@ -1222,7 +1262,7 @@ function wireGlobal() {
       if (open.length) { closeModal(open[open.length - 1]); return; }   // закриваємо верхню
       return;
     }
-    if (e.key === "/" && !typing) { e.preventDefault(); $("filter").focus(); $("filter").select(); }
+    if (e.key === "/" && !typing && !document.querySelector(".modal-back.open")) { e.preventDefault(); switchNavMode("containers"); $("filter").focus(); $("filter").select(); }
     if (e.key === "?" && !typing) { e.preventDefault(); showShortcuts(); }
     if (e.key === "r" && e.ctrlKey && !typing) { e.preventDefault(); refreshAll(); }
   });
@@ -1268,7 +1308,7 @@ function wireResizer() {
     document.addEventListener("mouseup", onUp);
   });
   bar.addEventListener("dblclick", () => {
-    left.style.width = "380px";
+    left.style.width = clampLeft(380) + "px";
     S.cfg.leftWidth = 380;
     persist();
   });
@@ -1277,7 +1317,7 @@ function wireResizer() {
 /* ═══ старт ═══ */
 (async () => {
   const lastConn = restore();
-  wireGlobal(); wireConnUI(); wireLogsUI(); wireFilesUI(); wireEditorUI();
+  wireGlobal(); wireNavigation(); wireContainerTable(); wireConnUI(); wireLogsUI(); wireFilesUI(); wireEditorUI();
   wireTermUI(); wireServerUI(); wireResourcesUI(); wirePalette(); wireBulk();
   wireExtras(); wireProjectUI(); wireDuUI();
 

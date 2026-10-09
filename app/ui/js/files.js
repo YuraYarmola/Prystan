@@ -405,10 +405,12 @@ function modeFor(path) {
   return MODE_BY_EXT[ext] ?? null;
 }
 
-async function openEditor(path, target = null) {
+async function openEditor(path, target = null, context = null) {
+  if (S.editorSaving) return;
+  if (S.editorDirty && !(await closeEditor())) return;
   target = target ?? (isFsHost() ? "host" : "container");
-  const conn = target === "host" ? fsConn() : S.activeConn;
-  const cid = target === "host" ? null : S.selected?.id;
+  const conn = context?.conn ?? (target === "host" ? fsConn() : S.activeConn);
+  const cid = context?.cid ?? (target === "host" ? null : S.selected?.id);
   const inv = (op, extra) => target === "host"
     ? invoke("host_" + op, { conn, ...extra })
     : invoke(op, { conn, id: cid, ...extra });
@@ -420,10 +422,11 @@ async function openEditor(path, target = null) {
       return;
     }
     S.editorCtx = { path, truncated: r.truncated, target, conn, cid };
-    $("editor-title").textContent = path + ` (${fmtBytes(r.size)})`;
+    const label = conn === "local" && target === "host" ? t("context.local") : targetName(conn) + (cid ? " / " + (S.selected?.name ?? cid.slice(0, 12)) : "");
+    $("editor-title").textContent = label + " › " + path + ` (${fmtBytes(r.size)})`;
     $("editor-title").title = target === "host" ? t("files.onServer") : t("files.inContainer");
-    $("editor-note").textContent = r.truncated ? t("editor.truncated") : (isReadonly() ? t("editor.roProfile") : "");
-    $("editor-save").disabled = r.truncated || isReadonly();
+    $("editor-note").textContent = r.truncated ? t("editor.truncated") : (editorReadonly(S.editorCtx) ? t("editor.roProfile") : "");
+    $("editor-save").disabled = r.truncated || editorReadonly(S.editorCtx);
     $("editor-modal").classList.add("open");
     document.body.classList.toggle("editor-docked", S.cfg.editorDock);
     if (!S.editor) {
@@ -438,6 +441,8 @@ async function openEditor(path, target = null) {
         $("editor-dirty").style.display = "inline";
       });
     }
+    S.editor.setOption("readOnly", r.truncated || editorReadonly(S.editorCtx));
+    S.editor.setOption("theme", S.theme === "dark" ? "material-darker" : "default");
     S.editor.setOption("mode", modeFor(path));
     S._settingValue = true;
     S.editor.setValue(b64ToStr(r.content_b64));
@@ -450,26 +455,43 @@ async function openEditor(path, target = null) {
   } catch (e) { toast("Відкриття: " + e); }
 }
 
+function syncEditorAccess() {
+  const ctx = S.editorCtx;
+  if (!ctx || !S.editor) return;
+  const ro = editorReadonly(ctx);
+  S.editor.setOption("readOnly", ctx.truncated || ro);
+  $("editor-save").disabled = S.editorSaving || ctx.truncated || ro;
+  $("editor-note").textContent = ctx.truncated ? t("editor.truncated") : ro ? t("editor.roProfile") : "";
+}
+
 async function saveEditor() {
   const ctx = S.editorCtx;
-  if (!ctx || ctx.truncated) return;
-  if (!guardRW("guard.saveFile")) return;
+  if (!ctx || ctx.truncated || S.editorSaving) return;
+  if (editorReadonly(ctx) && !guardRW("guard.saveFile", ctx.conn)) return;
+  const content = S.editor.getValue(), backup = $("editor-backup").checked;
   const inv = (op, extra) => ctx.target === "host"
     ? invoke("host_" + op, { conn: ctx.conn, ...extra })
     : invoke(op, { conn: ctx.conn, id: ctx.cid, ...extra });
+  S.editorSaving = true;
+  $("editor-save").disabled = true;
   try {
-    // B6 — бекап .bak перед записом
-    const backup = $("editor-backup").checked;
+    // Неповний або невдалий бекап не дає перезаписати оригінал.
     if (backup && ctx.target === "host") {
-      await invoke("host_fs_read", { conn: ctx.conn, path: ctx.path })
-        .then(r => invoke("host_fs_write", { conn: ctx.conn, path: ctx.path + ".bak", contentB64: r.content_b64 }))
-        .catch(() => {});
+      const original = await invoke("host_fs_read", { conn: ctx.conn, path: ctx.path });
+      if (original.truncated) throw new Error(t("editor.backupIncomplete"));
+      await invoke("host_fs_write", { conn: ctx.conn, path: ctx.path + ".bak", contentB64: original.content_b64 });
     }
-    await inv("fs_write", { path: ctx.path, contentB64: strToB64(S.editor.getValue()), backup: ctx.target === "container" ? backup : undefined });
-    S.editorDirty = false;
-    $("editor-dirty").style.display = "none";
+    await inv("fs_write", { path: ctx.path, contentB64: strToB64(content), backup: ctx.target === "container" ? backup : undefined });
+    if (S.editorCtx === ctx) {
+      S.editorDirty = S.editor.getValue() !== content;
+      $("editor-dirty").style.display = S.editorDirty ? "inline" : "none";
+    }
     toast("💾 " + t("files.saved") + ": " + ctx.path + (backup ? " (.bak)" : ""), "ok", 3000);
-  } catch (e) { toast("Збереження: " + e); }
+  } catch (e) { toast(t("editor.saveFailed") + ": " + e); }
+  finally {
+    S.editorSaving = false;
+    $("editor-save").disabled = !!S.editorCtx && (S.editorCtx.truncated || editorReadonly(S.editorCtx));
+  }
 }
 
 let edCursor = null;
@@ -491,13 +513,15 @@ function edFind(dir) {
 }
 
 async function closeEditor() {
+  if (S.editorSaving) return false;
   if (S.editorDirty) {
     const yes = await ask({ title: t("editor.unsaved"), text: t("editor.unsavedText", { path: esc(S.editorCtx?.path ?? "") }), okLabel: t("editor.close") });
-    if (!yes) return;
+    if (!yes) return false;
   }
   $("editor-modal").classList.remove("open");
   document.body.classList.remove("editor-docked");
   S.editorDirty = false;
+  return true;
 }
 
 /** Режим «збоку»: редактор перестає бути модалкою, і логи лишаються видимі. */

@@ -44,7 +44,7 @@ pub async fn scan_image(
     conn: String,
     image: String,
 ) -> Result<ScanResult, String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let step = |s: &str| {
         let _ = app.emit(
             "scan-progress",

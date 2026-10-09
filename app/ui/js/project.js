@@ -16,22 +16,14 @@ async function loadProjects() {
 function renderProjectBox() {
   const box = $("projbox");
   if (!box) return;
+  const scroll = box.scrollTop;
   box.innerHTML = "";
 
   const sec = document.createElement("div");
   sec.className = "section";
-  sec.innerHTML = `${ic("folderCode")} ${t("proj.section")}` +
-    `<span class="cnt">${visibleProjects().length}</span>` +
-    `<span class="plus" title="${esc(t("proj.add"))}">${ic("plus")}</span>`;
-  sec.onclick = e => {
-    if (e.target.closest(".plus")) { openProjectModal(); return; }
-    S.projCollapsed = !S.projCollapsed;
-    persist();
-    renderProjectBox();
-  };
+  sec.innerHTML = `${ic("folderCode")} ${t("proj.section")}<span class="cnt">${visibleProjects().length}</span><button class="project-add">${ic("plus")} ${esc(t("proj.add"))}</button>`;
+  sec.querySelector("button").onclick = () => openProjectModal();
   box.appendChild(sec);
-
-  if (S.projCollapsed) return;
 
   // Список привʼязаний до вибраного сервера: для проду — свої теки, для
   // стейджа — свої. Проєкти без сервера (створені раніше) видно скрізь.
@@ -47,8 +39,10 @@ function renderProjectBox() {
   for (const p of shown) {
     const chip = document.createElement("div");
     chip.className = "projchip" + (S.view === "project" && S.project?.id === p.id ? " active" : "");
+    chip.tabIndex = 0; chip.setAttribute("role","button"); chip.dataset.navkey = "project:" + p.id;
+    chip.onkeydown = e => { if (["Enter"," "].includes(e.key)) { e.preventDefault(); openProject(p.id); } };
     chip.title = p.remote ? `${profileById(p.conn)?.host ?? p.conn}:${p.path}` : p.path;
-    chip.innerHTML = `${ic("folderCode", "sm")}<span class="nm">${esc(p.name)}</span>` +
+    chip.innerHTML = `${ic("folderCode", "sm")}<span class="project-info"><strong>${esc(p.name)}</strong><small>${esc(p.path)}</small></span>` +
       (p.remote ? `<span class="rem" title="${esc(t("proj.remote"))}">${ic("server", "sm")}</span>` : "");
     chip.onclick = () => openProject(p.id);
     chip.oncontextmenu = e => {
@@ -66,6 +60,7 @@ function renderProjectBox() {
     chips.appendChild(chip);
   }
   box.appendChild(chips);
+  box.scrollTop = scroll;
 }
 
 async function openProject(id) {
@@ -76,6 +71,8 @@ async function openProject(id) {
     const ok = await connectProfile(p.conn, { silent: true });
     if (!ok) return;
   }
+  if (p.remote && p.conn !== S.activeConn) switchConn(p.conn);
+  rememberNavigation(); pendingNavigation = null; S.navMode = "projects";
   S.project = p;
   S.projInfo = null;
   S.view = "project";
@@ -123,19 +120,9 @@ function renderProjectHeader() {
 /** Compose-панель для проєкту: ті самі кнопки, але з локальним docker. */
 function openProjectCompose() {
   const p = S.project;
-  S.composeCtx = {
-    conn: projConn(),
-    project: p.name,
-    workdir: p.path,
-    config: S.projInfo?.compose ? p.path + "/" + S.projInfo.compose : "",
-    kind: p.remote ? "ssh" : "local",
-  };
-  const hasCompose = !!S.projInfo?.compose;
-  $("cm-workdir").textContent = `${t("compose.workdir")}: ${p.path}` +
-    (hasCompose ? "" : " · " + t("proj.noCompose"));
-  ["cm-up", "cm-down", "cm-restart", "cm-pull", "cm-build"].forEach(id => $(id).disabled = !hasCompose);
-  $("cm-edit-compose").disabled = !hasCompose;
-  $("cm-edit-env").disabled = false;
+  S.composeCtx = { conn: projConn(), project: "", label: p.name, workdir: p.path,
+    configs: (S.projInfo?.compose_configs ?? (S.projInfo?.compose ? [S.projInfo.compose] : [])).map(f => p.path + "/" + f), kind: p.remote ? "ssh" : "local" };
+  renderComposeContext();
 }
 
 /* ── список і форма ── */

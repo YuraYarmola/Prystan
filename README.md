@@ -99,40 +99,62 @@ A **DEMO** badge in the header shows the mode is on. Turn it off in the same pla
 
 ## Connections
 
-**Set up.** Click **＋** next to *CONNECTIONS*, or take the *SSH server* card on the
+**Set up.** Click **＋** next to the current server selector, or take the *SSH server* card on the
 start screen.
 
 | Type | What to enter |
 |---|---|
 | **Local** | nothing — the local socket or named pipe is used |
 | **SSH** | host, port, user, optionally a path to a private key |
-| **TCP** | host and daemon port (`2375`, or `2376` with TLS) |
+| **TCP** | host and daemon HTTP port (`2375`); use SSH for encrypted connections |
 
 SSH needs no agent or extra software on the server: the app opens a tunnel with your
 own `ssh` client, so anything that works in your terminal works here — including keys
 from an agent and settings from `~/.ssh/config`.
 
-**Use.** A click on the chip switches to a server, the power icon connects or
-disconnects it. A manual disconnect is remembered and the profile is not raised again
-on its own. Everything else reconnects at startup and after a dropped link, with a
-growing pause between attempts.
+**Use.** Open the server selector (**Alt+S**) to search by name or address.
+Larger lists use a compact two-column grid. Pinned profiles and recent choices come
+first; **★** pins a profile, with the first four pins also available as one-click
+sidebar shortcuts. Hover or focus a row for its address and connection details.
+Search accepts multiple words; arrow keys select a result and **Enter** opens it. Selecting an offline
+profile keeps it offline; press **Connect** when ready. The separate power button
+connects or disconnects a profile. Previous/next buttons and **Alt+Up/Down** switch
+servers. **Manage** opens the profile editor and context import.
+
+**Container table.** Click **Table** beside the container count for a full-width
+list with status, CPU, RAM and ports. Problems appear first by default; click a
+column header to sort by name, status, CPU or RAM, and click again to reverse it.
+Search and status filters are shared with the sidebar. The log button opens a
+container's logs directly, while the menu exposes its existing actions. Bulk
+selection stays synchronized with the tree. **Tree**
+returns to the previous container detail. Table preference and sorting survive
+restart, and each server keeps its table scroll position. Statistics refresh
+while the table is open; unavailable readings show a dash. In narrow windows,
+ports appear under container names.
+
+The sidebar keeps **Containers / Server / Projects** modes visible. Docker resources
+and **All servers** stay at the bottom, independently of list scrolling. Each server
+remembers its selected object, detail tab, filters and list position during the session.
+A manual disconnect is remembered; enabled profiles reconnect at startup and after
+a dropped link, with a growing pause between attempts.
 
 **Read-only** in the profile blocks every mutating action for that server. A good fit
-for production: browsing, logs and files stay available, buttons that change something
-do not.
+for production: browsing, logs and file viewing stay available. Docker and remote-host
+mutations are checked in the backend too. Interactive remote/container terminals and
+image scanning are blocked; Compose validation remains available.
 
 **Import** takes existing `docker context` entries and turns them into profiles.
 
-**Right-click a chip** to copy the server's IP, `user@host` or a ready `ssh` command;
-the address in the *SERVER* line is click-to-copy as well.
+**Right-click the server selector or a picker row** to copy the server's IP,
+`user@host` or a ready `ssh` command, or edit its profile.
 
 ## Containers
 
-**Use.** The list groups containers by compose project. A group can be started,
-stopped or opened as a stack; a single container gets logs, a shell, files and
-inspect.
+**Use.** Choose **Stacks** or a flat **List**. Click a stack name to open its details;
+use its chevron to expand/collapse containers. The toolbar folds all stacks and adds
+a container directly. A single container gets logs, a shell, files and inspect.
 
-- **Right-click** a container or a stack for the full menu — logs, shell, files,
+- Use the **…** button, **Shift+F10**, or **right-click** a container or a stack for the full menu — logs, shell, files,
   inspect, start/stop/restart, copy name or id, delete.
 - **Filter** (`/`) matches names, images, projects, **ports**, container ids and
   status text: type `8080` to find who took the port, `exited` to see what fell over.
@@ -140,7 +162,7 @@ inspect.
 - **Bulk mode** (checkbox icon) selects several containers and applies one action to
   all of them.
 - **Keyboard**: `↑`/`↓` walk the list, `Enter` opens, `←`/`→` fold a stack, `Del`
-  removes, `Space` toggles a bulk selection.
+  removes, `Space` toggles a bulk selection. Arrow keys act only in the list or its search.
 
 **Indicators.** The dot tells you the state at a glance: healthy pulses green,
 unhealthy but still running pulses amber, anything stopped is a steady grey. A
@@ -247,12 +269,27 @@ A project belongs to the server selected at the time — production gets its fol
 staging its own; "all servers" makes a local project visible everywhere.
 
 **Use.** The project gets its files with the editor, a **shell opened right inside
-that folder**, `compose up / build / down / restart / pull` run by your local
-`docker`, and folder size analysis. The badges in the header show what the app found
+that folder**, Compose actions executed locally or on its SSH server, and folder size analysis. The badges in the header show what the app found
 there: a compose file, a Dockerfile, git.
 
-Read-only on a production profile does not affect projects — they are your own files
-and have nothing to do with the server.
+Read-only on a production profile does not affect **local files and local shells**.
+Remote project changes and terminals follow their server's read-only setting. Local
+Compose operations follow the local Docker profile's read-only setting.
+
+**Compose actions.** Validate checks configuration without displaying resolved secrets.
+Download images and Build images do not restart containers; use Apply afterwards.
+Restart uses the existing container configuration. Stop and remove deletes the stack's
+containers and networks, keeping volumes. Deployed stacks use their recorded project
+name and every recorded Compose file; folder projects use Compose's own project naming
+and a detected default override. The file selector chooses which file to open, while
+all listed files are passed to the command in order. Output stays available when
+switching between targets. Commands use the connection's Docker socket, independently
+of the CLI's active context.
+
+Environment edits in the container inspector do not update Compose files or `.env`.
+For persistent stack changes, edit those files and Apply. Recreation involves downtime,
+keeps existing volumes and image, and attempts recovery on failure. Containers with
+static IP settings require a Compose update instead.
 
 ## Images and maintenance
 
@@ -408,6 +445,16 @@ app/
 The backend talks to Docker through [bollard](https://github.com/fussybeaver/bollard)
 (Engine API). SSH uses the system `ssh` client: a tunnel for the Docker socket, one
 persistent agent process for file operations, and ConPTY for interactive terminals.
+
+## Validation
+
+Run `cargo test --manifest-path app/src-tauri/Cargo.toml` for backend tests and
+`node --test tests/ui-contracts.cjs` for frontend operation contracts (Node 18+).
+Two opt-in Docker integration tests create disposable Prystan test resources:
+with Docker running and `busybox:1.37` available, run
+`cargo test --manifest-path app/src-tauri/Cargo.toml -- --ignored`.
+They exercise multi-file Compose deployment, pull without redeployment, environment
+recreation, anonymous-volume data preservation, and editor backup/metadata behavior.
 
 ## Documentation
 

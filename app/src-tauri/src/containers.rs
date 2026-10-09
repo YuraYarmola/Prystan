@@ -209,7 +209,7 @@ pub async fn container_action(
     id: String,
     action: String,
 ) -> Result<(), String> {
-    let d = state.docker(&conn)?;
+    let d = state.docker_write(&conn)?;
     let r = match action.as_str() {
         "start" => d.start_container(&id, None::<StartContainerOptions>).await,
         "stop" => d.stop_container(&id, None::<StopContainerOptions>).await,

@@ -29,7 +29,7 @@ const D_PROFILES = [
 const ctr = (id, name, image, state, status, project, service, ports = "") => ({
   id, name, image, state, status, project, service, ports,
   workdir: project ? `/srv/${project}` : "",
-  config_file: project ? `/srv/${project}/docker-compose.yml` : "",
+  config_file: project ? `/srv/${project}/docker-compose.yml` + (project === "shopfront" ? `,/srv/${project}/docker-compose.override.yml` : "") : "",
 });
 
 const D_CONTAINERS = {
@@ -371,7 +371,7 @@ async function route(cmd, a = {}) {
       dm.projects = dm.projects.filter(x => x.id !== a.id);
       return clone(dm.projects);
     case "project_probe": case "host_project_probe":
-      return { exists: true, compose: "docker-compose.yml", dockerfile: true, git: true };
+      return { exists: true, compose: "docker-compose.yml", compose_configs: ["docker-compose.yml", "docker-compose.override.yml"], dockerfile: true, git: true };
 
     case "connect":
       dm.up.add(a.profileId);
@@ -588,17 +588,14 @@ async function route(cmd, a = {}) {
 
     /* решта */
     case "compose_cmd": {
+      a = a.request;
       const lines = [
-        `$ docker ${a.action === "build" ? "compose build" : "compose " + a.action + " -d"}`,
-        " ✔ Container shopfront-postgres-1  Healthy",
-        " ✔ Container shopfront-redis-1     Healthy",
-        " ✔ Container shopfront-api-1       Started",
-        " ✔ Container shopfront-worker-1    Started",
-        " ✔ Container shopfront-web-1       Started",
+        `$ docker compose ${a.project ? "-p " + a.project + " " : ""}${a.configs.map(f => '-f "' + f + '"').join(" ")} ${a.action === "validate" ? "config --quiet" : a.action === "up" ? "up -d" : a.action}`,
+        ...(a.action === "validate" ? [] : [a.action === "pull" ? " ✔ Images downloaded" : a.action === "build" ? " ✔ Images built" : " ✔ Compose action completed"]),
         "✓ Готово",
       ];
       lines.forEach((line, i) => setTimeout(
-        () => emit("compose-output", { conn: a.conn, project: a.project, line, done: i === lines.length - 1 }),
+        () => emit("compose-output", { conn: a.conn, project: a.project, job: a.job, line, done: i === lines.length - 1 }),
         i * 350));
       return null;
     }

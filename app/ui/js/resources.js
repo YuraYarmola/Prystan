@@ -10,7 +10,7 @@ function renderImages() {
       <td>${fmtAgo(i.created)}</td>
       <td><div class="racts">
         <button data-act="layers" data-id="${esc(i.id)}" title="${esc(t("img.layers"))}">${ic("layers")}</button>
-        <button data-act="scan" data-id="${esc(i.id)}" title="${esc(t("scan.title"))}">${ic("shield")}</button>
+        <button data-act="scan" data-id="${esc(i.id)}" ${isReadonly() ? `disabled title="${esc(t("compose.readonly"))}"` : `title="${esc(t("scan.title"))}"`}>${ic("shield")}</button>
         <button data-act="push" data-id="${esc(i.id)}" title="${esc(t("img.push"))}">${ic("upload")}</button>
         <button data-act="rm" data-id="${esc(i.id)}" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>
       </div></td>
@@ -18,6 +18,8 @@ function renderImages() {
   $("images-table").innerHTML = `<table class="grid">
     <thead><tr><th>${t("res.tag")}</th><th style="text-align:right">${t("files.size")}</th><th>${t("insp.created")}</th><th style="width:150px"></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
+  ["pull-btn", "build-btn", "create-btn", "prune-images"].forEach(id => $(id).disabled = isReadonly());
+  $("images-table").querySelectorAll("button[data-act]").forEach(b => { b.disabled = b.dataset.act !== "layers" && isReadonly(); });
   $("images-table").querySelectorAll("button[data-act]").forEach(b => b.onclick = async () => {
     const img = S.images.find(i => i.id === b.dataset.id);
     if (!img) return;
@@ -43,6 +45,8 @@ function renderVolumes() {
   $("volumes-table").innerHTML = `<table class="grid">
     <thead><tr><th>${t("files.name")}</th><th>${t("res.driver")}</th><th>${t("res.mountpoint")}</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
+  $("prune-volumes").disabled = isReadonly();
+  $("volumes-table").querySelectorAll("button[data-n]").forEach(b => { b.disabled = isReadonly(); });
   $("volumes-table").querySelectorAll("button[data-n]").forEach(b => b.onclick = async () => {
     if (!guardRW("guard.rmVolume")) return;
     if (!(await ask({ title: t("res.deleteVolume"), text: t("res.deleteVolumeText", { name: esc(b.dataset.n) }), okLabel: t("common.delete") }))) return;
@@ -63,6 +67,7 @@ function renderNetworks() {
   $("networks-table").innerHTML = `<table class="grid">
     <thead><tr><th>${t("files.name")}</th><th>${t("res.driver")}</th><th>${t("res.scope")}</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
+  $("networks-table").querySelectorAll("button[data-id]").forEach(b => { b.disabled = isReadonly(); });
   $("networks-table").querySelectorAll("button[data-id]").forEach(b => b.onclick = async () => {
     if (!guardRW("guard.rmNetwork")) return;
     try { await invoke("remove_network", { conn: S.activeConn, id: b.dataset.id }); refreshAll(); }
@@ -98,6 +103,7 @@ async function openDf() {
         <div class="sc-value">${fmtBytes(d.images_total + d.containers_total + d.volumes_total + d.build_cache)}</div>
         <div class="sc-sub">${t("df.canFree")}: ${fmtBytes(d.images_unused + d.volumes_unused + d.build_cache)}</div>
       </div>`;
+    box.querySelectorAll("button[data-p]").forEach(b => { b.disabled = isReadonly(); });
     box.querySelectorAll("button[data-p]").forEach(b => b.onclick = () => pruneWhat(b.dataset.p, b.textContent));
   } catch (e) {
     box.innerHTML = errorBox(e);
@@ -160,13 +166,18 @@ function crPreview() {
   $("cr-preview").textContent = parts.join(" \\\n  ");
 }
 
+let createTarget = null;
+function openCreateModal() {
+  createTarget = S.activeConn;
+  if (!guardRW("guard.create",createTarget)) return;
+  if (!S.conns[createTarget]?.dockerOk) return;
+  crPreview();
+  $("create-target").textContent = targetName(createTarget);
+  $("create-modal").classList.add("open");
+  setTimeout(() => $("cr-image").focus(),60);
+}
 function wireCreate() {
-  $("create-btn").onclick = () => {
-    if (!guardRW("guard.create")) return;
-    crPreview();
-    $("create-modal").classList.add("open");
-    setTimeout(() => $("cr-image").focus(), 60);
-  };
+  $("create-btn").onclick = openCreateModal;
   ["cr-image", "cr-name", "cr-ports", "cr-vols", "cr-env", "cr-cmd"].forEach(id => $(id).oninput = crPreview);
   $("cr-restart").onchange = crPreview;
   $("cr-go").onclick = async () => {
@@ -182,7 +193,8 @@ function wireCreate() {
     };
     if (!spec.image) return toast(t("create.needImage"));
     try {
-      await invoke("create_container", { conn: S.activeConn, spec });
+      if (!guardRW("guard.create",createTarget)) return;
+      await invoke("create_container", { conn: createTarget, spec });
       $("create-modal").classList.remove("open");
       toast(t("create.done"), "ok", 3000);
       refreshAll();
@@ -228,63 +240,90 @@ listen("build-output", ev => {
   out.scrollTop = out.scrollHeight;
 });
 
-/* compose */
+/* compose: операція зберігає контекст навіть після переходу до іншого сервера. */
+const composeJobs = new Map();
+const composeKey = ctx => ctx ? JSON.stringify([ctx.conn, ctx.project, ctx.workdir, ctx.configs]) : "";
+const composeActions = ["validate", "up", "build", "restart", "pull", "down"];
+
 function openComposePane() {
-  const st = S.selectedStack;
+  const st = S.selectedStack, prof = activeProfile();
   const wd = st.rows.find(r => r.workdir)?.workdir ?? "";
-  const cfg = (st.rows.find(r => r.config_file)?.config_file ?? "").split(",")[0];
-  const prof = activeProfile();
-  S.composeCtx = { conn: S.activeConn, project: st.project, workdir: wd, config: cfg, kind: prof.kind };
-  $("cm-workdir").textContent = wd ? `${t("compose.workdir")}: ${wd}` : t("compose.noWorkdir");
-  const enabled = (prof.kind === "ssh" || prof.kind === "local") && !!wd && !isReadonly();
-  ["cm-up", "cm-down", "cm-restart", "cm-pull", "cm-build"].forEach(id => $(id).disabled = !enabled);
-  $("cm-edit-compose").disabled = !cfg || prof.kind === "tcp";
-  $("cm-edit-env").disabled = !wd || prof.kind === "tcp";
+  const configs = (st.rows.find(r => r.config_file)?.config_file ?? "").split(",").filter(Boolean);
+  S.composeCtx = { conn: S.activeConn, project: st.project, label: st.project, workdir: wd, configs, kind: prof.kind };
+  renderComposeContext();
+}
+
+function renderComposeContext() {
+  const ctx = S.composeCtx;
+  if (!ctx) return;
+  const available = ["ssh", "local"].includes(ctx.kind) && !!ctx.workdir && !!ctx.configs.length;
+  const ro = isReadonly(ctx.conn), job = composeJobs.get(composeKey(ctx));
+  const reason = !["ssh", "local"].includes(ctx.kind) ? t("compose.noExecutor")
+    : !ctx.workdir ? t("compose.noWorkdir") : !ctx.configs.length ? t("proj.noCompose")
+    : ro ? t("compose.readonly") : "";
+  $("cm-context").innerHTML = `<strong>${esc(ctx.label)} · ${esc(ctx.conn === "local" ? t("context.local") : targetName(ctx.conn))}</strong>
+    <div class="hint">${esc(t("compose.project"))}: ${esc(ctx.project || t("compose.defaultProject"))}</div>
+    <div class="hint">${esc(t("compose.explain"))}</div>`;
+  $("cm-workdir").textContent = `${t("compose.workdir")}: ${ctx.workdir || "—"}${reason ? " · " + reason : ""}`;
+  const configSelect = $("cm-config"), selected = configSelect.value;
+  configSelect.innerHTML = ctx.configs.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+  if (ctx.configs.includes(selected)) configSelect.value = selected;
+  configSelect.disabled = !ctx.configs.length;
+  composeActions.forEach(a => {
+    $("cm-" + a).disabled = !available || !!job?.running || (ro && a !== "validate");
+    $("cm-" + a).title = t("compose.effect." + a);
+  });
+  $("cm-edit-compose").disabled = !ctx.configs.length || ctx.kind === "tcp";
+  $("cm-edit-env").disabled = !ctx.workdir || ctx.kind === "tcp";
+  $("cm-output").textContent = job?.output ?? "";
+  $("cm-output").style.display = job ? "block" : "none";
+  $("cm-status").textContent = job ? t(job.running ? "compose.running" : job.ok ? "compose.success" : "compose.failed", { action: t("compose." + job.action) }) : t("compose.ready");
 }
 
 async function composeRun(action) {
-  const ctx = S.composeCtx;
-  if (!ctx || !guardRW("guard.groupAction")) return;
+  const ctx = S.composeCtx && { ...S.composeCtx, configs: [...S.composeCtx.configs] };
+  if (!ctx || composeJobs.get(composeKey(ctx))?.running) return;
+  if (action !== "validate" && !guardRW("guard.groupAction", ctx.conn)) return;
   if (action === "down" && !(await ask({
-    title: "compose down",
-    text: t("compose.downConfirm", { project: esc(ctx.project) }),
-    okLabel: "down",
+    title: t("compose.down"),
+    text: `<b>${esc(targetName(ctx.conn))}</b><br>${t("compose.downConfirm", { project: esc(ctx.label) })}`,
+    okLabel: t("compose.down"),
   }))) return;
-  const out = $("cm-output");
-  out.style.display = "block";
-  out.textContent = "";
-  setBusy(true);
+  if (composeJobs.get(composeKey(ctx))?.running) return;
+  const job = { id: crypto.randomUUID(), action, ctx, running: true, output: "", ok: false };
+  composeJobs.set(composeKey(ctx), job);
+  if (composeKey(S.composeCtx) === composeKey(ctx)) renderComposeContext();
   try {
-    await invoke("compose_cmd", { conn: ctx.conn ?? S.activeConn, project: ctx.project, workdir: ctx.workdir, action });
-  } catch (e) { out.textContent += "✗ " + e + "\n"; setBusy(false); }
+    await invoke("compose_cmd", { request: { conn: ctx.conn, project: ctx.project, workdir: ctx.workdir, configs: ctx.configs, action, job: job.id } });
+  } catch (e) {
+    job.output += "✗ " + e + "\n"; job.running = false;
+    if (composeKey(S.composeCtx) === composeKey(ctx)) renderComposeContext();
+  }
 }
 
 listen("compose-output", ev => {
   const p = ev.payload;
-  const ctx = S.composeCtx;
-  if (!ctx || p.conn !== (ctx.conn ?? S.activeConn) || p.project !== ctx.project) return;
-  const out = $("cm-output");
-  out.style.display = "block";
-  out.textContent += p.line + "\n";
-  out.scrollTop = out.scrollHeight;
+  const job = [...composeJobs.values()].find(j => j.id === p.job && j.ctx.conn === p.conn);
+  if (!job) return;
+  job.output = (job.output + p.line + "\n").slice(-500000);
   if (p.done) {
-    setBusy(false);
-    refreshAll({ quiet: true });
-    const ok = !p.line.startsWith("✗");
-    tgAlert(`${ok ? "✅" : "⚠"} <b>${ctx.project}</b>\ncompose: ${esc(p.line)}`, "composeDone");
+    job.running = false; job.ok = !p.line.startsWith("✗");
+    toast(`${targetName(job.ctx.conn)} · ${job.ctx.label}: ${t(job.ok ? "compose.success" : "compose.failed")}`, job.ok ? "ok" : "err");
+    if (job.ctx.conn === S.activeConn) refreshAll({ quiet: true });
+    tgAlert(`${job.ok ? "✅" : "⚠"} <b>${esc(job.ctx.label)}</b>\ncompose: ${esc(p.line)}`, "composeDone");
+  }
+  if (S.composeCtx && composeKey(S.composeCtx) === composeKey(job.ctx)) {
+    renderComposeContext();
+    $("cm-output").scrollTop = $("cm-output").scrollHeight;
   }
 });
 
 function wireCompose() {
-  $("cm-up").onclick = () => composeRun("up");
-  $("cm-build").onclick = () => composeRun("build");
-  $("cm-down").onclick = () => composeRun("down");
-  $("cm-restart").onclick = () => composeRun("restart");
-  $("cm-pull").onclick = () => composeRun("pull");
-  $("cm-edit-compose").onclick = () => openEditor(S.composeCtx.config, "host");
+  composeActions.forEach(a => $("cm-" + a).onclick = () => composeRun(a));
+  $("cm-edit-compose").onclick = () => openEditor($("cm-config").value, "host", { conn: S.composeCtx.conn });
   $("cm-edit-env").onclick = () => {
     const ctx = S.composeCtx;
-    openEditor(ctx.workdir.replace(/[\\/]+$/, "") + "/.env", "host");
+    openEditor(ctx.workdir.replace(/[\\/]+$/, "") + "/.env", "host", { conn: ctx.conn });
   };
 }
 
@@ -314,10 +353,12 @@ function maskValue(line) {
 }
 
 async function openInspect() {
+  const conn = S.activeConn, id = S.selected?.id;
   const box = $("inspect");
   box.innerHTML = `<div class="placeholder"><span class="spin"></span></div>`;
   try {
-    const j = await invoke("inspect_container", { conn: S.activeConn, id: S.selected.id });
+    const j = await invoke("inspect_container", { conn, id });
+    if (S.activeConn !== conn || S.selected?.id !== id) return;
     const cfg = j.Config ?? {}, hc = j.HostConfig ?? {}, st = j.State ?? {};
     const ports = Object.entries(j.NetworkSettings?.Ports ?? {}).map(([k, v]) =>
       [k, (v ?? []).map(b => `${b.HostIp}:${b.HostPort}`).join(", ") || "—"]);
@@ -371,6 +412,8 @@ async function openInspect() {
 
       <h3>${t("insp.raw")} <button id="raw-toggle" style="font-size:11px;padding:2px 8px">${t("insp.show")}</button></h3>
       <pre id="raw-json" style="display:none">${esc(JSON.stringify(j, null, 2))}</pre>`;
+    $("lim-apply").disabled = isReadonly(conn);
+    $("env-edit").disabled = isReadonly(conn);
     $("lim-apply").onclick = applyLimits;
     $("diff-load").onclick = loadDiff;
 
@@ -464,8 +507,8 @@ function cancelEnvEdit() {
 }
 
 async function applyEnvEdit() {
-  const c = S.selected;
-  if (!c || !guardRW("guard.recreate")) return;
+  const c = S.selected, conn = S.activeConn;
+  if (!c || !guardRW("guard.recreate", conn)) return;
   const env = $("env-edit-area").value
     .split("\n")
     .map(l => l.trim())
@@ -480,18 +523,21 @@ async function applyEnvEdit() {
 
   const ok = await ask({
     title: t("insp.envConfirm"),
-    text: t("insp.envConfirmText", { name: esc(c.name) }),
+    text: `<b>${esc(targetName(conn))}</b><br>` + t("insp.envConfirmText", { name: esc(c.name) }) + (c.project ? "<br><br>" + t("insp.composeEnvWarning") : ""),
     okLabel: t("insp.envConfirmBtn"),
   });
   if (!ok) return;
 
+  const job = { conn, id: c.id, warning: "" };
+  S.recreateJob = job;
   const prog = $("env-progress");
   prog.style.display = "block";
   prog.innerHTML = `<span class="spin"></span> …`;
   $("env-apply").disabled = true;
   try {
-    const newId = await invoke("recreate_with_env", { conn: S.activeConn, id: c.id, env });
-    toast(t("insp.envDone"), "ok", 5000);
+    const newId = await invoke("recreate_with_env", { conn, id: c.id, env });
+    toast(t("insp.envDone") + (job.warning ? " · " + job.warning : ""), job.warning ? "warn" : "ok", job.warning ? 12000 : 5000);
+    if (S.activeConn !== conn || S.selected?.id !== c.id) return;
     await refreshAll();
     const fresh = S.containers.find(x => x.id === newId) || S.containers.find(x => x.name === c.name);
     if (fresh) { S.selected = fresh; renderTree(); }
@@ -506,7 +552,9 @@ async function applyEnvEdit() {
 }
 
 listen("recreate-progress", ev => {
-  if (ev.payload.conn !== S.activeConn) return;
+  const job = S.recreateJob;
+  if (job && ev.payload.conn === job.conn && ev.payload.id === job.id && ev.payload.line.startsWith("увага:")) job.warning = ev.payload.line;
+  if (ev.payload.conn !== S.activeConn || (ev.payload.id && ev.payload.id !== S.selected?.id)) return;
   const prog = $("env-progress");
   if (prog) { prog.style.display = "block"; prog.innerHTML = `<span class="spin"></span> ${esc(ev.payload.line)}`; }
 });

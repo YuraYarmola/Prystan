@@ -107,7 +107,7 @@ function renderProc() {
         <td style="text-align:right">${p.mem.toFixed(1)}%</td>
         <td style="text-align:right">${fmtBytes(p.rss)}</td>
         <td class="grow mono" style="font-size:11px">${esc(p.cmd.slice(0, 140))}</td>
-        <td><div class="racts"><button data-pid="${p.pid}" class="danger" title="kill">${ic("x")}</button></div></td>
+        <td><div class="racts"><button data-pid="${p.pid}" ${isReadonly() ? "disabled" : ""} class="danger" title="kill">${ic("x")}</button></div></td>
       </tr>`).join("");
   $("proc-table").innerHTML = `<table class="grid">
     <thead><tr><th>PID</th><th>USER</th><th style="text-align:right">CPU</th><th style="text-align:right">MEM</th><th style="text-align:right">RSS</th><th>${t("srv.cmd")}</th><th style="width:40px"></th></tr></thead>

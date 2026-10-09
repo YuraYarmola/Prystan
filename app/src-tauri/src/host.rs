@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -311,6 +311,7 @@ pub async fn host_kill(
     signal: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if !is_ssh(&p) {
         return Err("лише для SSH-підключень".into());
     }
@@ -418,6 +419,7 @@ pub async fn host_fs_write(
     content_b64: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     let data = b64().decode(&content_b64).map_err(|e| e.to_string())?;
     if p.kind == "local" {
         return std::fs::write(&path, data).map_err(|e| e.to_string());
@@ -522,6 +524,7 @@ pub async fn host_fs_upload(
     content_b64: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     let data = b64().decode(&content_b64).map_err(|e| e.to_string())?;
     if p.kind == "local" {
         return std::fs::write(std::path::Path::new(&dir).join(&filename), data)
@@ -538,6 +541,7 @@ pub async fn host_fs_mkdir(
     path: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         return std::fs::create_dir_all(&path).map_err(|e| e.to_string());
     }
@@ -559,6 +563,7 @@ pub async fn host_fs_delete(
         return Err("відмова: не можна видалити корінь".into());
     }
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         let md = std::fs::metadata(&path).map_err(|e| e.to_string())?;
         return if md.is_dir() {
@@ -886,6 +891,7 @@ pub async fn host_fs_rename(
     to: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         return std::fs::rename(&from, &to).map_err(|e| e.to_string());
     }
@@ -912,6 +918,7 @@ pub async fn host_fs_create(
     is_dir: bool,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         return if is_dir {
             std::fs::create_dir_all(&path).map_err(|e| e.to_string())
@@ -944,6 +951,7 @@ pub async fn host_fs_copy(
     to: String,
 ) -> Result<(), String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         let src = std::path::Path::new(&from);
         return if src.is_dir() {
@@ -977,6 +985,7 @@ pub async fn host_fs_chmod(
         return Err("режим має бути вісімковим, напр. 644".into());
     }
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if p.kind == "local" {
         return Err("chmod недоступний для локальної Windows-ФС".into());
     }
@@ -1252,6 +1261,8 @@ pub async fn host_project_probe(
         "cd {} 2>/dev/null || {{ echo NOPE; exit 0; }}; \
          for f in compose.yaml compose.yml docker-compose.yml docker-compose.yaml; do \
            [ -f \"$f\" ] && {{ echo \"C=$f\"; break; }}; done; \
+         for f in compose.override.yml compose.override.yaml docker-compose.override.yml docker-compose.override.yaml; do \
+           [ -f \"$f\" ] && {{ echo \"O=$f\"; break; }}; done; \
          [ -f Dockerfile ] && echo D; [ -e .git ] && echo G; exit 0",
         sh_quote(&path)
     );
@@ -1261,9 +1272,14 @@ pub async fn host_project_probe(
         return Ok(serde_json::json!({ "exists": false }));
     }
     let compose = text.lines().find_map(|l| l.strip_prefix("C=").map(|s| s.trim().to_string()));
+    let mut compose_configs: Vec<String> = compose.iter().cloned().collect();
+    if compose.is_some() {
+        if let Some(file) = text.lines().find_map(|l| l.strip_prefix("O=")) { compose_configs.push(file.trim().to_string()); }
+    }
     Ok(serde_json::json!({
         "exists": true,
         "compose": compose,
+        "compose_configs": compose_configs,
         "dockerfile": text.lines().any(|l| l.trim() == "D"),
         "git": text.lines().any(|l| l.trim() == "G"),
     }))
@@ -1289,6 +1305,7 @@ pub async fn host_term_open(
     cwd: Option<String>,
 ) -> Result<String, String> {
     let p = get_profile(&state, &conn)?;
+    if p.kind != "local" { crate::writable_profile(&p)?; }
     if !is_ssh(&p) {
         return Err("термінал хоста доступний лише для SSH-підключень".into());
     }
@@ -1466,6 +1483,8 @@ fn which(exe: &str) -> bool {
 #[tauri::command]
 pub fn host_term_input(state: State<'_, AppState>, sid: String, data_b64: String) -> Result<(), String> {
     use std::io::Write;
+    let conn = state.pty_conns.lock().unwrap().get(&sid).cloned();
+    if let Some(conn) = conn { state.require_writable(&conn)?; }
     let bytes = b64().decode(data_b64).map_err(|e| e.to_string())?;
     let mut map = state.ptys.lock().unwrap();
     let h = map.get_mut(&sid).ok_or("сесію не знайдено")?;
@@ -1504,23 +1523,127 @@ pub fn host_term_close(state: State<'_, AppState>, sid: String) {
 struct ComposeOut {
     conn: String,
     project: String,
+    job: String,
     line: String,
     done: bool,
+}
+
+fn compose_args(project: &str, configs: &[String], action: &str) -> Result<Vec<String>, String> {
+    if !project.is_empty() && !regex::Regex::new(r"^[a-z0-9][a-z0-9_-]*$").unwrap().is_match(project) {
+        return Err("некоректне ім'я Compose-проєкту".into());
+    }
+    if configs.is_empty() || configs.iter().any(|f| f.trim().is_empty() || f.contains('\0')) {
+        return Err("вкажіть Compose-файли".into());
+    }
+    let mut args = vec!["compose".into()];
+    if !project.is_empty() { args.extend(["-p".into(), project.into()]); }
+    for config in configs { args.extend(["-f".into(), config.clone()]); }
+    match action {
+        "up" => args.extend(["up".into(), "-d".into()]),
+        "down" | "restart" | "pull" | "build" => args.push(action.into()),
+        "validate" => args.extend(["config".into(), "--quiet".into()]),
+        _ => return Err(format!("невідома compose-дія: {action}")),
+    }
+    Ok(args)
+}
+
+fn compose_executor_args(kind: &str, args: &[String]) -> Vec<String> {
+    let endpoint = if kind == "ssh" { "unix:///var/run/docker.sock".to_string() } else {
+        #[cfg(windows)]
+        { "npipe:////./pipe/docker_engine".to_string() }
+        #[cfg(not(windows))]
+        { std::env::var("DOCKER_HOST").ok().filter(|s| s.starts_with("unix://")).unwrap_or_else(|| "unix:///var/run/docker.sock".into()) }
+    };
+    let mut command = vec!["--host".into(), endpoint];
+    command.extend_from_slice(args);
+    command
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+    #[test]
+    fn targets_all_files_and_exact_project_without_implicit_deploy() {
+        let files = vec!["/app/compose.yml".into(), "/app/override file.yml".into()];
+        assert_eq!(compose_args("shop", &files, "pull").unwrap(),
+            ["compose", "-p", "shop", "-f", "/app/compose.yml", "-f", "/app/override file.yml", "pull"]);
+        assert!(!compose_args("shop", &files, "up").unwrap().iter().any(|a| a == "--remove-orphans"));
+        assert_eq!(compose_args("", &files, "validate").unwrap().last().unwrap(), "--quiet");
+        assert!(compose_args("Display Name", &files, "up").is_err());
+        assert!(compose_args("shop", &[], "up").is_err());
+        assert!(compose_args("shop", &files, "rm").is_err());
+        assert_eq!(sh_quote("override 'file.yml"), "'override '\\''file.yml'");
+    }
+
+    #[test]
+    #[ignore = "requires local Docker Compose and busybox:1.37; creates a disposable stack"]
+    fn local_compose_uses_overrides_and_pull_does_not_redeploy() {
+        let project = format!("prystan-test-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let dir = std::env::temp_dir().join(&project);
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("compose.yml");
+        let extra = dir.join("override file.yml");
+        std::fs::write(&base, "services:\n  app:\n    image: busybox:1.37\n    command: [sleep, '300']\n    environment:\n      PRYSTAN_TEST: first\n    labels:\n      prystan.test: compose\n").unwrap();
+        std::fs::write(&extra, "services:\n  app:\n    environment:\n      PRYSTAN_TEST: second\n").unwrap();
+        let files = vec![base.to_string_lossy().into_owned(), extra.to_string_lossy().into_owned()];
+        let command = |args: Vec<String>| -> Result<String, String> {
+            let mut cmd = std::process::Command::new("docker");
+            cmd.args(compose_executor_args("local", &args)).current_dir(&dir);
+            for name in ["DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"] { cmd.env_remove(name); }
+            #[cfg(windows)]
+            { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
+            let output = cmd.output().map_err(|e| e.to_string())?;
+            if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        };
+        let result: Result<(), String> = (|| {
+            command(compose_args(&project, &files, "validate")?)?;
+            command(compose_args(&project, &files, "pull")?)?;
+            let mut ps = compose_args(&project, &files, "pull")?;
+            ps.pop(); ps.extend(["ps".into(), "-q".into()]);
+            if !command(ps.clone())?.trim().is_empty() { return Err("pull started a container".into()); }
+            command(compose_args(&project, &files, "up")?)?;
+            let id = command(ps.clone())?.trim().to_owned();
+            let env = |id: &str| command(vec!["exec".into(), id.into(), "printenv".into(), "PRYSTAN_TEST".into()]);
+            if env(&id)?.trim() != "second" { return Err("override not applied".into()); }
+            std::fs::write(&extra, "services:\n  app:\n    environment:\n      PRYSTAN_TEST: third\n").map_err(|e| e.to_string())?;
+            command(compose_args(&project, &files, "pull")?)?;
+            if command(ps.clone())?.trim() != id || env(&id)?.trim() != "second" { return Err("pull redeployed the service".into()); }
+            command(compose_args(&project, &files, "up")?)?;
+            if env(command(ps)?.trim())?.trim() != "third" { return Err("Apply did not update env".into()); }
+            Ok(())
+        })();
+        let cleanup = command(compose_args(&project, &files, "down").unwrap());
+        // Тека має точне унікальне ім'я тесту.
+        std::fs::remove_file(base).unwrap();
+        std::fs::remove_file(extra).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+        cleanup.unwrap();
+        result.unwrap();
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ComposeRequest {
+    conn: String,
+    project: String,
+    workdir: String,
+    action: String,
+    configs: Vec<String>,
+    job: String,
 }
 
 #[tauri::command]
 pub async fn compose_cmd(
     app: AppHandle,
     state: State<'_, AppState>,
-    conn: String,
-    project: String,
-    workdir: String,
-    action: String,
+    request: ComposeRequest,
 ) -> Result<(), String> {
+    let ComposeRequest { conn, project, workdir, action, configs, job } = request;
     let p = get_profile(&state, &conn)?;
-    if !matches!(action.as_str(), "up" | "down" | "restart" | "pull" | "build") {
-        return Err(format!("невідома compose-дія: {action}"));
-    }
+    if action != "validate" { crate::writable_profile(&p)?; }
+    if workdir.trim().is_empty() { return Err("вкажіть робочу теку".into()); }
+    let stages = vec![compose_args(&project, &configs, &action)?];
 
     let emit = {
         let app = app.clone();
@@ -1532,26 +1655,12 @@ pub async fn compose_cmd(
                 ComposeOut {
                     conn: conn.clone(),
                     project: project.clone(),
+                    job: job.clone(),
                     line,
                     done,
                 },
             );
         }
-    };
-
-    // стадії: pull складається з двох послідовних команд
-    let stages: Vec<Vec<String>> = match action.as_str() {
-        "pull" => vec![
-            vec!["compose".into(), "pull".into()],
-            vec!["compose".into(), "up".into(), "-d".into()],
-        ],
-        "build" => vec![
-            vec!["compose".into(), "build".into()],
-            vec!["compose".into(), "up".into(), "-d".into()],
-        ],
-        "up" => vec![vec!["compose".into(), "up".into(), "-d".into(), "--remove-orphans".into()]],
-        "down" => vec![vec!["compose".into(), "down".into()]],
-        _ => vec![vec!["compose".into(), "restart".into()]],
     };
 
     if p.kind != "ssh" && p.kind != "local" {
@@ -1560,11 +1669,12 @@ pub async fn compose_cmd(
 
     tokio::spawn(async move {
         for stage in stages {
+            let stage = compose_executor_args(&p.kind, &stage);
             let child = if p.kind == "ssh" {
                 let remote = format!(
-                    "cd {} && docker {} 2>&1",
+                    "cd {} && env -u DOCKER_CONTEXT -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker {} 2>&1",
                     sh_quote(&workdir),
-                    stage.join(" ")
+                    stage.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ")
                 );
                 let mut cmd = ssh_command(&p);
                 cmd.arg(remote);
@@ -1573,6 +1683,7 @@ pub async fn compose_cmd(
             } else {
                 let mut cmd = tokio::process::Command::new("docker");
                 cmd.args(&stage).current_dir(&workdir);
+                for name in ["DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"] { cmd.env_remove(name); }
                 #[cfg(windows)]
                 cmd.creation_flags(0x0800_0000);
                 cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());

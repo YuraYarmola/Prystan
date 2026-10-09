@@ -88,6 +88,7 @@ async function applyLimits() {
 let scanData = null;
 
 async function scanImage(image) {
+  if (!guardRW("scan.title")) return;
   const tag = image.tags?.[0] || image.id.replace("sha256:", "").slice(0, 19);
   scanData = null;
   $("scan-title").textContent = "· " + tag;

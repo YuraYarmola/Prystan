@@ -6,7 +6,57 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-09
+
+### Changed
+- Add a container table in the main workspace with sortable name, status, CPU and
+  RAM, shared search/status filters, visible ports and direct log access. Problems
+  appear first by default. Preserve table scrolling per server and ignore delayed
+  statistics from other servers. Keep unknown readings distinct from zero, and
+  retain container navigation when statistics fail. Adapt columns to small windows.
+- Make the server picker compact, with two columns for larger lists, pinned profiles
+  and recent choices first. The first four pinned profiles appear directly below the current server
+  for one-click switching. Names take one row; addresses and connection details appear
+  on hover/focus. Alt+S opens search, with directional keyboard navigation and ranked,
+  multi-word matches. Pins and recent choices survive restart.
+- Replace wrapping server chips with a searchable server picker and previous/next
+  controls. Selecting an offline profile keeps it offline until Connect is pressed.
+- Keep Containers, Server and Projects modes, Docker resources and the all-server
+  dashboard accessible independently of list scrolling. Add containers directly from
+  the sidebar; show projects as readable rows and server tools with text labels.
+- Remember each server's selected object, detail tab, filters and list position during
+  navigation. Polling preserves list scrolling and keyboard focus. Compose expansion
+  is scoped to the server; stack names open details and chevrons expand the list.
+- Add grouped/flat container layouts, expand/collapse all stacks, labelled status
+  filters and stable action menus. Scope arrow navigation to the container list and
+  search, with Alt+Up/Down for servers and Shift+F10 for container/stack actions.
+- Compose now has explicit **Validate**, **Apply**, **Download images**, **Build images**,
+  **Restart**, and **Stop and remove** actions. Pull and build no longer redeploy
+  containers implicitly; Apply keeps orphan containers. Commands target the exact
+  stack name, every declared Compose file in order, and the same Docker endpoint
+  used by the connection. Folder projects retain Compose's own project naming and
+  include a detected default override file.
+- Switching language now refreshes cached container and stack action labels too.
+- A persistent context row identifies the current server and object, with a visible
+  read-only badge. Compose shows its executor, files, effects, progress and outcome;
+  operation output survives navigation between servers.
+
 ### Fixed
+- Enforce read-only profiles in backend commands as well as the UI, including image
+  scanning and terminal creation/input. Local project files and shells remain usable.
+- Preserve the editor's original target when switching servers. Read-only and truncated
+  files cannot be edited; failed or incomplete backups prevent overwriting the original.
+  Edits made while saving remain unsaved, and duplicate saves are prevented. Container
+  file saves preserve permissions and ownership instead of forcing mode 0644.
+- Load CodeMirror's matching simple-mode addon before Dockerfile syntax highlighting;
+  the missing addon previously caused a startup JavaScript error. Editor colours now
+  follow the application theme.
+- Container environment recreation pins the inspected image and reuses existing
+  anonymous volumes. Rename/create/start/readiness failures attempt recovery and report
+  recovery errors honestly. Unique backup names avoid fixed-name collisions; healthchecks
+  are awaited for up to 60 seconds. Static IP configurations are rejected before stopping
+  the original container and should be updated through Compose.
+
 - **Servers got stuck as "no Docker" after a dropped link.** When an SSH tunnel
   died — laptop sleep, a network or VPN switch — the daemon check went through
   the dead tunnel, got `client error (Connect)`, and concluded Docker was
@@ -244,7 +294,8 @@ daemon and five real SSH servers.
 - Telegram alerts for container crashes and resource thresholds
 - Light and dark themes; Ukrainian, Russian and English interface
 
-[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/YuraYarmola/prystan/releases/tag/v0.3.0
 [0.2.2]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.2
 [0.2.1]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.1
 [0.2.0]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.0

@@ -18,6 +18,16 @@ env:
 # залежність менше, і збірка не падає, коли marketplace недоступний.
 
 jobs:
+  ui:
+    name: UI contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/*.cjs
+
   windows:
     name: Build and test (Windows)
     runs-on: windows-latest

@@ -30,24 +30,48 @@
 
   <main>
     <div id="left">
-      <div id="connbox"></div>
-      <div id="projbox"></div>
-      <div class="bar">
-        <input id="filter" data-i18n-ph="app.filter" />
-        <button id="refresh" data-icon="rotate" data-i18n-title="app.refresh"></button>
+      <div id="connbox">
+        <div class="server-toolbar">
+          <button id="server-select" aria-expanded="false" aria-controls="server-picker"></button>
+          <button id="server-add" data-icon="plus" data-i18n-title="conn.new" data-i18n-aria="conn.new"></button>
+        </div>
+        <div class="server-paging">
+          <button id="server-prev" data-icon="chevronLeft" data-i18n-title="nav.prevServer" data-i18n-aria="nav.prevServer"></button>
+          <button id="server-next" data-icon="chevronRight" data-i18n-title="nav.nextServer" data-i18n-aria="nav.nextServer"></button>
+          <span><span data-i18n="nav.servers"></span> <kbd>Alt+S</kbd></span>
+          <button id="server-manage" class="ghost" data-icon="settings"><span data-i18n="nav.manage"></span></button>
+        </div>
+        <div id="server-quick" hidden data-i18n-aria="nav.quickServers"></div>
+        <div id="server-picker" hidden>
+          <input id="server-search" type="search" data-i18n-ph="nav.serverSearch" data-i18n-aria="nav.serverSearch" />
+          <div id="server-options"></div>
+          <div class="server-picker-footer">
+            <div id="server-preview"></div>
+            <div id="server-picker-hint"></div>
+          </div>
+        </div>
+      </div>
+      <div id="nav-modes" class="seg" data-i18n-aria="nav.modes">
+        <button data-mode="containers" class="on" data-icon="layers"><span data-i18n="nav.containers"></span></button>
+        <button data-mode="server" data-icon="server"><span data-i18n="nav.server"></span></button>
+        <button data-mode="projects" data-icon="folderCode"><span data-i18n="nav.projects"></span></button>
+      </div>
+      <div id="projbox" hidden></div>
+      <div class="bar" id="container-search">
+        <input id="filter" type="search" data-i18n-ph="app.filter" data-i18n-aria="app.filter" />
+        <button id="refresh" data-icon="rotate" data-i18n-title="app.refresh" data-i18n-aria="app.refresh"></button>
       </div>
       <div class="bar" id="quickbar">
         <div class="seg" id="quick-filter">
-          <button data-q="all" class="on" data-icon="list" data-i18n-title="quick.all"></button>
-          <button data-q="running" data-icon="play" data-i18n-title="quick.running"></button>
-          <button data-q="stopped" data-icon="stop" data-i18n-title="quick.stopped"></button>
-          <button data-q="unhealthy" data-icon="alert" data-i18n-title="quick.problem"></button>
+          <button data-q="all" class="on" data-i18n-title="quick.all"><span data-i18n="nav.all"></span></button>
+          <button data-q="running" data-i18n-title="quick.running"><span data-i18n="nav.running"></span></button>
+          <button data-q="stopped" data-i18n-title="quick.stopped"><span data-i18n="nav.stopped"></span></button>
+          <button data-q="unhealthy" data-i18n-title="quick.problem"><span data-i18n="nav.problems"></span></button>
         </div>
-        <span style="flex:1"></span>
-        <button id="bulk-toggle" class="ghost" data-icon="checkSquare" data-i18n-title="bulk.toggle"></button>
+        <button id="bulk-toggle" class="ghost" data-icon="checkSquare" data-i18n-title="bulk.toggle" data-i18n-aria="bulk.toggle"></button>
       </div>
       <div id="treehead"></div>
-      <div id="tree"></div>
+      <div id="tree" role="tree" data-i18n-aria="nav.containers"></div>
       <div id="bulkbar" style="display:none">
         <span id="bulk-count">0</span>
         <span style="flex:1"></span>
@@ -56,11 +80,24 @@
         <button data-b="restart" data-icon="rotate" data-i18n-title="bulk.restart"></button>
         <button data-b="rm" class="danger" data-icon="trash" data-i18n-title="bulk.rm"></button>
       </div>
+      <div id="nav-footer">
+        <select id="nav-resources" data-i18n-aria="nav.resources">
+          <option value="" data-i18n="nav.resources"></option>
+          <option value="top" data-i18n="top.title"></option>
+          <option value="images" data-i18n="tree.images"></option>
+          <option value="volumes" data-i18n="tree.volumes"></option>
+          <option value="networks" data-i18n="tree.networks"></option>
+          <option value="df" data-i18n="tree.disk"></option>
+          <option value="journal" data-i18n="tree.journal"></option>
+        </select>
+        <button id="nav-dashboard" data-icon="grid"><span data-i18n="nav.dashboard"></span></button>
+      </div>
     </div>
 
     <div id="resizer" data-i18n-title="keys.resize"></div>
 
     <div id="right">
+      <div id="target-context" aria-live="polite"></div>
       <div id="detail-header"></div>
       <div id="tabs" style="display:none"></div>
       <div id="content">
@@ -136,7 +173,9 @@
         <div class="pane" id="pane-inspect"><div id="inspect"></div></div>
 
         <div class="pane" id="pane-compose">
+          <div id="cm-context" class="compose-context"></div>
           <div class="toolbar">
+            <button id="cm-validate" data-icon="check"><span data-i18n="compose.validate"></span></button>
             <button id="cm-up" class="primary" data-icon="play"><span data-i18n="compose.up"></span></button>
             <button id="cm-build" data-icon="hammer"><span data-i18n="compose.build"></span></button>
             <button id="cm-restart" data-icon="rotate"><span data-i18n="compose.restart"></span></button>
@@ -146,7 +185,9 @@
             <button id="cm-edit-compose" data-icon="file"><span data-i18n="compose.editCompose"></span></button>
             <button id="cm-edit-env" data-icon="key"><span data-i18n="compose.editEnv"></span></button>
           </div>
+          <div class="compose-files"><label for="cm-config" data-i18n="compose.files"></label><select id="cm-config"></select></div>
           <div id="cm-workdir" class="hint" style="padding:6px 12px"></div>
+          <div id="cm-status" role="status" class="hint" style="padding:0 12px 8px"></div>
           <div id="cm-output"></div>
         </div>
 
@@ -198,6 +239,20 @@
         </div>
 
         <!-- навантаження по всіх контейнерах -->
+        <div class="pane" id="pane-containers">
+          <div class="ct-toolbar">
+            <input id="ct-search" type="search" data-i18n-ph="ct.search" data-i18n-aria="ct.search" />
+            <select id="ct-state" data-i18n-aria="ct.statusFilter">
+              <option value="all" data-i18n="nav.all"></option>
+              <option value="running" data-i18n="nav.running"></option>
+              <option value="stopped" data-i18n="nav.stopped"></option>
+              <option value="unhealthy" data-i18n="nav.problems"></option>
+            </select>
+            <button id="ct-tree" data-icon="layers"><span data-i18n="ct.tree"></span></button>
+          </div>
+          <div class="ct-summary"><span id="ct-count"></span><span id="ct-stats-status"></span><button id="ct-retry" hidden data-i18n="ct.retry"></button></div>
+          <div id="ct-scroll"></div>
+        </div>
         <div class="pane" id="pane-top"><div class="respane" id="top-table"></div></div>
 
         <div class="pane" id="pane-dash"><div class="respane" id="dash-body" style="padding:16px"></div></div>
@@ -241,7 +296,7 @@
       <div class="mhead"><span data-i18n="conn.title"></span> <span class="x" data-icon="x" data-close="conn-modal"></span></div>
       <div class="mbody">
         <div class="plist" id="profile-list"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="profile-import" style="display:flex;gap:8px;margin-bottom:12px">
           <button id="import-contexts" data-i18n="conn.import"></button>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:12px">
@@ -250,7 +305,7 @@
             <label data-i18n="conn.name"></label><input id="pf-name" />
             <label data-i18n="conn.type"></label>
             <select id="pf-kind"><option value="ssh">SSH</option><option value="tcp">TCP</option></select>
-            <label id="l-host" data-i18n="conn.host"></label><input id="pf-host" placeholder="168.119.96.236" />
+            <label id="l-host" data-i18n="conn.host"></label><input id="pf-host" placeholder="192.0.2.10" />
             <label id="l-port" data-i18n="conn.port"></label><input id="pf-port" style="width:100px" />
             <label id="l-user" data-i18n="conn.user"></label><input id="pf-user" placeholder="root" />
             <label id="l-key" data-i18n="conn.key"></label><input id="pf-key" data-i18n-ph="conn.keyHint" />
@@ -270,7 +325,7 @@
 
   <div class="modal-back" id="create-modal">
     <div class="modal" style="width:600px">
-      <div class="mhead"><span data-i18n="create.title"></span> <span class="x" data-icon="x" data-close="create-modal"></span></div>
+      <div class="mhead"><span data-i18n="create.title"></span> <span id="create-target" class="badge"></span> <span class="x" data-icon="x" data-close="create-modal"></span></div>
       <div class="mbody">
         <div class="form-grid">
           <label data-i18n="create.image"></label><input id="cr-image" placeholder="redis:7-alpine" />
@@ -604,6 +659,7 @@
 <script src="vendor/addon-search.js"></script>
 <script src="vendor/cm/codemirror.js"></script>
 <script src="vendor/cm/searchcursor.js"></script>
+<script src="vendor/cm/simple.js"></script>
 <script src="vendor/cm/mode/shell.js"></script>
 <script src="vendor/cm/mode/javascript.js"></script>
 <script src="vendor/cm/mode/python.js"></script>
@@ -622,6 +678,7 @@
 <!-- підміняє транспорт вигаданими даними; має завантажитись до core.js -->
 <script src="js/demo.js"></script>
 <script src="js/core.js"></script>
+<script src="js/nav.js"></script>
 <script src="js/project.js"></script>
 <script src="js/conn.js"></script>
 <script src="js/logs.js"></script>
@@ -630,6 +687,7 @@
 <script src="js/server.js"></script>
 <script src="js/resources.js"></script>
 <script src="js/extras.js"></script>
+<script src="js/container-table.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
