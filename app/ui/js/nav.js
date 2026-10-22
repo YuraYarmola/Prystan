@@ -3,7 +3,7 @@
 const navMemory = new Map();
 let pendingNavigation = null, navScrollRestore = null, pickerSignature = "";
 const RESOURCE_VIEWS = ["top", "images", "volumes", "networks", "df", "journal"];
-const viewMode = view => view === "server" ? "server" : view === "project" ? "projects" : "containers";
+const viewMode = view => view === "server" ? "server" : view === "project" ? "projects" : view === "databases" ? "databases" : "containers";
 function navigationState() {
   const id = S.activeConn ?? "";
   if (!navMemory.has(id)) navMemory.set(id, {mode:"containers", filter:"", quick:"all", views:{}, scroll:{}});
@@ -41,6 +41,8 @@ function applyNavigation(saved) {
   } else if (saved.view === "project") {
     const p = visibleProjects().find(p => p.id === saved.project);
     if (p && (!p.remote || S.conns[p.conn]?.up)) { S.project = p; S.projInfo = saved.info ?? null; S.view = "project"; }
+  } else if (saved.view === "databases" && S.conns[S.activeConn]?.up) {
+    S.view = "databases";
   } else if (saved.view === "server" && activeProfile()?.kind === "ssh" && S.conns[S.activeConn]?.up) {
     S.view = "server";
   } else if (saved.view === "dash" || saved.view === "journal" || (RESOURCE_VIEWS.includes(saved.view) && S.conns[S.activeConn]?.dockerOk)) {
@@ -58,6 +60,7 @@ function prepareNavigation(conn) {
   const waitForList = (S.loading && S.navMode === "containers") || (saved && ["container","stack"].includes(saved.view));
   pendingNavigation = waitForList ? {conn, saved:saved ?? {view:"welcome"}, scroll:navScrollRestore} : null;
   applyNavigation(saved);
+  if (!saved && S.navMode === "databases") S.view = "databases";
   if (!saved && S.navMode === "server" && activeProfile()?.kind === "ssh" && S.conns[conn]?.up) S.view = "server";
 }
 function restorePendingNavigation(conn) {
@@ -76,6 +79,7 @@ function switchNavMode(mode) {
   const state = navigationState(), saved = state.views[mode];
   navScrollRestore = state.scroll[mode] ?? 0;
   applyNavigation(saved);
+  if (mode === "databases") S.view = "databases";
   if (mode === "server" && activeProfile()?.kind === "ssh" && S.conns[S.activeConn]?.up) S.view = "server";
   if (S.loading && saved && ["container","stack"].includes(saved.view)) {
     pendingNavigation = {conn:S.activeConn, saved, scroll:navScrollRestore};
@@ -203,6 +207,8 @@ function renderServerPicker() {
 function renderNavigation() {
   if (!$("nav-modes")) return;
   const mode = S.navMode;
+  $("tree").setAttribute("aria-label",t(mode === "databases" ? "db.title" : "nav.containers"));
+  $("tree").setAttribute("role",mode === "containers" ? "tree" : "group");
   $("nav-modes").querySelectorAll("button").forEach(b => {
     const selected = b.dataset.mode === mode && !RESOURCE_VIEWS.includes(S.view) && S.view !== "dash";
     b.classList.toggle("on",selected); b.setAttribute("aria-pressed",String(selected));

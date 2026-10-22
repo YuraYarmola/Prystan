@@ -42,7 +42,7 @@ fn ssh_args(p: &Profile) -> Vec<String> {
     a
 }
 
-fn ssh_command(p: &Profile) -> tokio::process::Command {
+pub(crate) fn ssh_command(p: &Profile) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("ssh");
     cmd.args(ssh_args(p));
     #[cfg(windows)]

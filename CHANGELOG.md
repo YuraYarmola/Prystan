@@ -6,6 +6,62 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-23
+
+Browse SQL databases and Redis directly in Prystan, with table statistics,
+server-side filters and secure remembered connections.
+
+### Changed
+- Present SQL databases in an embedded Adminer-style browser with a persistent
+  searchable table explorer, overview, direct Data/Structure actions and a grid
+  that fills the available pane. Preserve the explorer when switching app modes.
+- Add server-side column filters, native-type header sorting and 25/50/100-row
+  pages. Open structure without reading table data, inspect row previews and
+  export the current preview page as JSON with truncation metadata.
+- Auto-select a single running database source and import ClickHouse default/admin
+  passwords from a local YAML file into the current session.
+
+### Added
+- Demo screenshots and updated English/Ukrainian guides for the database browser.
+- Remember successful database connections using the native OS credential store.
+  Offer matching saved accounts automatically without returning stored passwords
+  to the UI. Add a remember checkbox and separate saved-profile deletion; failed
+  logins preserve good credentials and secure-storage errors keep the live session.
+- Adminer-style table statistics: row counts, total/data/index sizes where
+  available, table comments, numeric overview sorting and a metadata-only refresh.
+  Mark estimates and unavailable values explicitly; avoid COUNT(*) scans.
+- A read-only Databases mode for PostgreSQL, MySQL/MariaDB, ClickHouse and Redis.
+  Discover Docker containers and SSH host listeners; distinguish standard-port
+  hints from confirmed sources. Browse databases, searchable tables, structure
+  and paged data, or Redis keys and bounded typed values through SCAN.
+- Optional session-only credentials, read-only SQL sessions/transactions and a Redis read
+  allowlist. Preserve numeric precision in previews, bound output and operation
+  time, isolate results by server and clear credentials/results on disconnect.
+- Database UI contracts and opt-in integration coverage against four real engines.
+
+
+### Fixed
+- Fix ClickHouse previews exceeding 1 MiB on tables with large HTML/text fields.
+  Bound values in the read query, adapt page size to table width, and explicitly
+  mark truncated cells. Preserve Unicode, NULL and numeric text in compact output.
+- Distinguish failed row reads from empty tables, offer retry without reopening
+  credentials, and keep column headings readable when scrolling wide tables.
+- Fix database discovery waiting for SSH stdin EOF on Windows, which could leave
+  dedicated database servers empty after a timeout. Scan only the selected
+  server, run Docker and SSH checks concurrently, and reuse connection-scoped
+  discovery results for reads instead of rescanning before every query.
+
+
+### Screenshots
+
+All screenshots use invented demo data.
+
+| SQL table overview | Redis keys and values |
+|---|---|
+| ![Database overview](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.4.0/docs/screenshots/database-overview.png) | ![Redis browser](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.4.0/docs/screenshots/database-redis.png) |
+
+[Full database guide and screenshots](https://github.com/YuraYarmola/Prystan/blob/v0.4.0/README.md#databases)
+
 ## [0.3.0] — 2026-10-09
 
 ### Changed
@@ -294,7 +350,8 @@ daemon and five real SSH servers.
 - Telegram alerts for container crashes and resource thresholds
 - Light and dark themes; Ukrainian, Russian and English interface
 
-[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/YuraYarmola/prystan/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/YuraYarmola/prystan/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/YuraYarmola/prystan/releases/tag/v0.3.0
 [0.2.2]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.2
 [0.2.1]: https://github.com/YuraYarmola/prystan/releases/tag/v0.2.1

@@ -385,6 +385,42 @@ async function route(cmd, a = {}) {
     case "active_connections": return [...dm.up];
 
     /* контейнери */
+    case "database_discover": {
+      if(dm.dockerDown.has(conn))return {sources:[{id:'host:clickhouse:9000',name:'ClickHouse :9000',engine:'clickhouse',source:'host',state:'running',address:'127.0.0.1:9000',confirmed:false,port:9000}],warnings:[]};
+      const sources=(D_CONTAINERS[conn]||[]).filter(c=>/postgres|redis|clickhouse/.test(c.image)).map(c=>({id:'docker:'+c.id,name:c.name,engine:c.image.includes('postgres')?'postgres':c.image.includes('redis')?'redis':'clickhouse',source:'docker',state:c.state,address:c.ports||'Docker network',confirmed:true,port:5432}));
+      sources.push({id:'docker:demo-mysql',name:'demo-mysql',engine:'mysql',source:'docker',state:'running',address:'Docker network',confirmed:true,port:3306});
+      return {sources,warnings:[]};
+    }
+    case "database_saved_profiles": return JSON.parse(localStorage.getItem('prystan-demo-db-profiles')||'[]').filter(p=>p.conn===conn&&p.sourceId===a.sourceId);
+    case "database_forget_profile": {
+      const profiles=JSON.parse(localStorage.getItem('prystan-demo-db-profiles')||'[]');localStorage.setItem('prystan-demo-db-profiles',JSON.stringify(profiles.filter(p=>!(p.conn===conn&&p.sourceId===a.sourceId&&p.id===a.id))));return null;
+    }
+    case "database_browse": {
+      const r=a.request,engine=r.source_id.includes('mysql')?'mysql':r.source_id.includes('c5e')?'redis':'postgres';
+      if(r.action==='databases') {
+          if(r.password==='demo-wrong')throw Error('Demo authentication failed');
+          const databases=engine==='redis'?['0']:['demo','postgres'];
+          let saved=null;
+          if(r.remember) {
+            const profiles=JSON.parse(localStorage.getItem('prystan-demo-db-profiles')||'[]'),previous=profiles.find(p=>p.conn===conn&&p.sourceId===r.source_id&&p.id===r.saved_profile_id);
+            saved={id:previous?.id||'demo-db-'+Date.now(),conn,sourceId:r.source_id,username:previous?.username||r.username,database:r.database,password_saved:previous?.password_saved||!!r.password};
+            localStorage.setItem('prystan-demo-db-profiles',JSON.stringify([saved,...profiles.filter(p=>p.id!==saved.id)]));
+          }
+          return {databases,saved_profile:saved,save_error:null};
+        }
+      if(r.action==='tables')return [{schema:'public',name:'users',kind:'BASE TABLE',rows_count:'105',rows_estimated:true,data_bytes:'32768',index_bytes:'16384',total_bytes:'49152',comment:'Application users'},{schema:'public',name:'events',kind:'BASE TABLE',rows_count:'1842530',rows_estimated:true,data_bytes:'268435456',index_bytes:'67108864',total_bytes:'335544320',comment:'Application events'}];
+      if(r.action==='columns')return [{name:'id',type:'integer',nullable:'NO'},{name:'name',type:'text',nullable:'YES'}];
+      if(r.action==='rows') {
+          let rows=Array.from({length:105},(_,i)=>({id:i+1,name:i===0?null:'Demo user '+(i+1)}));
+          if(r.filter_column)rows=rows.filter(row=>{const v=row[r.filter_column];return r.filter_op==='is_null'?v===null:r.filter_op==='not_null'?v!==null:r.filter_op==='eq'?String(v)===r.filter_value:v!==null&&String(v).includes(r.filter_value);});
+          if(r.order_column)rows.sort((a,b)=>{const x=a[r.order_column],y=b[r.order_column];return (typeof x==='number'?x-y:String(x).localeCompare(String(y)))*(r.order_desc?-1:1);});
+          const start=r.offset||0,size=r.page_size||100;
+          return {rows:rows.slice(start,start+size),more:rows.length>start+size,page_size:size};
+        }
+      if(r.action==='keys')return {cursor:r.cursor==='0'?'12':'0',keys:['session:demo','cache:products','queue:jobs']};
+      if(r.action==='value')return {type:'string',value:'Demo value for '+r.key};
+      throw new Error('Unsupported database demo operation');
+    }
     case "list_containers": return pick(D_CONTAINERS, conn);
     case "container_action": {
       const list = D_CONTAINERS[conn] ?? [];

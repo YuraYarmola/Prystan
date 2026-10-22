@@ -54,6 +54,7 @@
       <div id="nav-modes" class="seg" data-i18n-aria="nav.modes">
         <button data-mode="containers" class="on" data-icon="layers"><span data-i18n="nav.containers"></span></button>
         <button data-mode="server" data-icon="server"><span data-i18n="nav.server"></span></button>
+        <button data-mode="databases" data-icon="database"><span data-i18n="db.title"></span></button>
         <button data-mode="projects" data-icon="folderCode"><span data-i18n="nav.projects"></span></button>
       </div>
       <div id="projbox" hidden></div>
@@ -102,6 +103,7 @@
       <div id="tabs" style="display:none"></div>
       <div id="content">
         <div id="welcome"></div>
+        <div class="pane" id="pane-databases"></div>
 
         <div class="pane" id="pane-logs">
           <div class="toolbar">
@@ -688,6 +690,7 @@
 <script src="js/resources.js"></script>
 <script src="js/extras.js"></script>
 <script src="js/container-table.js"></script>
+<script src="js/databases.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

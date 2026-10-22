@@ -24,6 +24,8 @@ Prystan is a desktop client with a lot of reach, so it is worth knowing what it 
 | Data | Where it lives |
 |---|---|
 | Connection profiles (host, port, user, key path) | `%APPDATA%\Prystan\profiles.json` — plain JSON, **no passwords** |
+| Database profile metadata (no passwords) | `%APPDATA%\Prystan\database-connections.json` |
+| Remembered database passwords | OS credential store (`Prystan.Database` service) |
 | Registry credentials | Windows Credential Manager (`Prystan` service) |
 | Telegram bot token | Windows Credential Manager (`Prystan` service) |
 | Action journal | `%APPDATA%\Prystan\journal.jsonl` |
@@ -40,6 +42,19 @@ client TLS certificate configuration is not implemented. Use SSH for encrypted a
   shells and image scans are included. Local project files and local shells are
   independent of a remote profile; Compose validation is allowed. This is an application
   policy, not a Docker daemon authorization boundary.
+- **Database browser.** Read-only profiles can run fixed database read operations
+  through container exec or SSH, without granting an interactive shell. The backend
+  resolves the source on the selected server, quotes identifiers, rejects unknown
+  operations and enables native SQL read-only settings. Redis uses a read-command
+  allowlist with SCAN instead of KEYS. There is no arbitrary query/command input.
+  Result caches and live credentials are cleared on disconnect. Opt-in remembering
+  (enabled by default) stores passwords only in the native OS credential store,
+  after a successful login, with no plaintext fallback. The metadata index contains
+  no passwords. Stored passwords stay in the backend and are bound to the server
+  profile, endpoint and database source. Failed logins do not overwrite them.
+  Deleting a saved connection removes its vault entry; closing a session retains
+  the saved profile. Database account permissions remain the underlying
+  authorization boundary.
 - **Secrets are masked** in the environment-variables view (keys matching
   `PASS|SECRET|TOKEN|KEY|...` and passwords inside DSN URLs) — but they are revealed on
   demand, and they are visible in `RAW JSON`. Be careful when screen-sharing.

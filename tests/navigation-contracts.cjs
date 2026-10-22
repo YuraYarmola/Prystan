@@ -130,3 +130,15 @@ test('recent server history stays bounded, unique and records offline selections
   h.run("switchConn('s3')");
   assert.equal(h.run('S.serverRecent[0]'),'s3'); assert.equal(h.run('connects'),0);
 });
+
+test('database mode is independent of Docker availability and restores container selection on return',()=>{
+  const h=harness();h.run(`S.selected=S.containers[0];S.view='container';S.tab='inspect';S.conns.a.dockerOk=false;switchNavMode('databases');`);
+  assert.equal(h.run('S.view'),'databases');assert.equal(h.run('S.navMode'),'databases');
+  h.run(`S.conns.a.dockerOk=true;switchNavMode('containers')`);
+  assert.equal(h.run('S.selected.id'),'one');assert.equal(h.run('S.tab'),'inspect');
+});
+
+test('database mode survives server round trips without borrowing another server selection',()=>{
+  const h=harness();h.run(`switchNavMode('databases');switchConn('b');switchConn('a');`);
+  assert.equal(h.run('S.view'),'databases');assert.equal(h.run('S.navMode'),'databases');assert.equal(h.run('S.selected'),null);
+});

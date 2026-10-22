@@ -234,6 +234,7 @@ function renderTreeContent() {
   renderProjectBox();
   renderNavigation();
   S.treeItems = [];
+  if (S.navMode === "databases" && S.conns[S.activeConn]?.up) { renderDatabaseSidebar(); return; }
   const f = $("filter").value.toLowerCase();
   const tree = $("tree");
   const head = $("treehead");
@@ -251,6 +252,7 @@ function renderTreeContent() {
     $("nav-connect").onclick = () => connectProfile(S.activeConn);
     return;
   }
+  if (S.navMode === "databases") { renderDatabaseSidebar(); return; }
   if (S.navMode === "server") {
     if (prof?.kind !== "ssh") {
       tree.innerHTML = `<div class="nav-empty">${esc(t("nav.sshTools"))}</div>`;
@@ -667,7 +669,7 @@ function renderTargetContext() {
 
 function renderDetail() {
   rememberContainerTableScroll();
-  if (["container","stack","server","project"].includes(S.view) && S.navMode !== viewMode(S.view)) {
+  if (["container","stack","server","project","databases"].includes(S.view) && S.navMode !== viewMode(S.view)) {
     S.navMode = viewMode(S.view); renderTree();
   }
   renderNavigation();
@@ -757,9 +759,10 @@ function renderDetail() {
   }
 
   tabs.style.display = "none";
-  const hdr = { containers: t("ct.title"), images: t("tree.images"), volumes: t("tree.volumes"), networks: t("tree.networks"), df: t("df.title"), dash: t("pal.dashboard"), journal: t("tree.journal"), top: t("top.title") };
+  const hdr = { databases: t("db.title"), containers: t("ct.title"), images: t("tree.images"), volumes: t("tree.volumes"), networks: t("tree.networks"), df: t("df.title"), dash: t("pal.dashboard"), journal: t("tree.journal"), top: t("top.title") };
   $("detail-header").dataset.sig = "";
   $("detail-header").innerHTML = `<span class="title">${hdr[S.view] ?? ""}</span>`;
+  if (S.view === "databases") show("pane-databases", renderDatabases);
   if (S.view === "containers") show("pane-containers", renderContainerTable);
   if (S.view === "top") show("pane-top", openTop);
   if (S.view === "images") show("pane-images", renderImages);
@@ -1035,6 +1038,7 @@ function buildPalette(q) {
   for (const p of S.projects) {
     add("folderCode", p.name, t("proj.one") + " · " + p.path, () => openProject(p.id));
   }
+  add("database", t("db.title"), t("pal.nav"), () => switchNavMode("databases"));
   const nav = [
     ["activity", t("tree.stats"), () => { S.view = "server"; S.srvTab = "stats"; }],
     ["cpu", t("tree.proc"), () => { S.view = "server"; S.srvTab = "proc"; }],

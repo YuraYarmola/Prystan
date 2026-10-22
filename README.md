@@ -2,11 +2,12 @@
 
 # ⚓ Prystan
 
-**Docker and your servers in one native window.**
+**Docker, servers and databases in one native window.**
 
 A fast desktop client for managing Docker over local socket, TCP or SSH —
-containers, logs, files, terminals, and the host machine itself.
+containers, logs, files, terminals, host metrics and a read-only database browser.
 
+[![Latest release](https://img.shields.io/github/v/release/YuraYarmola/Prystan)](https://github.com/YuraYarmola/Prystan/releases/latest)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/backend-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -22,23 +23,37 @@ containers and addresses in them are invented.*
 
 ---
 
+## New in 0.4.0
+
+Browse **PostgreSQL, MySQL/MariaDB, ClickHouse and Redis** alongside your containers.
+Discover databases on the selected server, inspect tables and their sizes, filter
+and sort row previews, or explore Redis keys. The embedded Adminer-style interface
+uses fixed read operations; successful connections can be remembered securely in
+the OS credential store.
+
+![Database overview with row counts and storage sizes](docs/screenshots/database-overview.png)
+
+[Database guide](#databases) · [Changes since 0.3.0](CHANGELOG.md#040--2026-10-23) ·
+[Download 0.4.0](https://github.com/YuraYarmola/Prystan/releases/tag/v0.4.0)
+
 ## Why
 
 Managing containers on several remote servers usually means one of three bad options:
 SSH into each box and type `docker` commands by hand, install a web panel *onto* the
 production server, or run Docker Desktop and give up 2 GB of RAM.
 
-Prystan is a **13 MB binary that uses ~40 MB of RAM**, connects to any Docker daemon
-over SSH without installing anything on the server, and puts logs, files, terminals
-and host metrics into one window.
+Prystan is a **roughly 15 MB portable binary**. It connects to Docker daemons
+over SSH without installing anything on the server, and puts logs, files, terminals,
+host metrics and database previews into one window.
 
 | | Prystan | Docker Desktop | Portainer | lazydocker |
 |---|---|---|---|---|
-| Install size | **13 MB** | ~1.5 GB | container | 30 MB |
+| Install size | **~15 MB** | ~1.5 GB | container | 30 MB |
 | RAM idle | **~40 MB** | 1.5–2 GB | server-side | ~20 MB |
 | Multi-server over SSH | **✅ built in** | ⚠️ contexts only | agents required | via `DOCKER_HOST` |
 | Container file manager + editor | **✅** | basic | limited | ❌ |
 | Host monitoring & processes | **✅** | ❌ | ❌ | ❌ |
+| Read-only SQL and Redis browser | **✅ built in** | — | — | — |
 | Full-history log search | **✅ server-side** | buffer only | buffer only | ❌ |
 | Nothing installed on the server | **✅** | — | ❌ | ✅ |
 
@@ -252,6 +267,86 @@ Available for SSH connections.
 - **Terminal** — a full shell.
 - **Servers dashboard** shows every configured server on one screen.
 
+## Databases
+
+| Table data, filtering and paging | Columns and table statistics |
+|---|---|
+| ![Database row preview](docs/screenshots/database-data.png) | ![Table structure](docs/screenshots/database-structure.png) |
+
+| Redis key browser | Remembered connections |
+|---|---|
+| ![Redis keys and values](docs/screenshots/database-redis.png) | ![Secure saved profiles](docs/screenshots/database-profiles.png) |
+
+Select **Databases** beside Containers, Server and Projects. Prystan discovers
+PostgreSQL, MySQL/MariaDB, ClickHouse and Redis containers on the current Docker
+endpoint, plus database TCP listeners on SSH hosts. Choose a source, enter optional
+credentials and select **Open databases**. Discovery scans only the selected server,
+runs Docker and SSH checks in parallel with a six-second discovery budget, and
+keeps discovered sources for that connection. Reading tables does not rescan the
+server. Use the discovery refresh button after adding or moving a service.
+A single running source is selected automatically. A dedicated database server
+does not need Docker. PostgreSQL also accepts an initial
+database when the account cannot connect to `postgres`.
+
+SQL sources open an Adminer-style browser inside the app: a persistent database
+selector and searchable table explorer on the left, a table overview with direct
+Data/Structure actions, and a scrollable grid on the right. Open **Filter rows**
+to match a column by literal text (equals/contains) or NULL status. Filters run on
+the server; click a column heading to sort ascending/descending using its native
+type. Choose 25, 50 or 100 rows per page. Opening structure alone does not read rows.
+The table overview, sidebar and table description show row counts and sizes from
+database metadata. Sort the overview by rows, total size, data size or indexes to
+find large tables. PostgreSQL and MySQL row counts are marked as estimates; missing
+statistics are shown as a dash rather than zero. PostgreSQL sizes include TOAST
+storage and table indexes; partition parents are not aggregated. MySQL reports
+engine data/index sizes. ClickHouse exposes its engine-provided total rows and
+bytes; separate data/index sizes are unavailable. Views and remote engines may
+have no statistics. **Refresh statistics** updates metadata without scanning rows
+or running ANALYZE/OPTIMIZE. Database statistics can be stale.
+Click a row number for a readable preview of its fields, or use **Export page JSON**
+to save the current page with filter/order and truncation metadata. This exports
+only the visible preview, including shortened values; credentials are excluded.
+ClickHouse bounds each cell preview to at most 256 Unicode
+characters and reduces page size for wide tables to stay within the 1 MiB
+transport limit. Truncated cells are marked; database values are unchanged.
+The pager shows the actual row count per page. Large numbers and decimals are returned as text to preserve
+precision. MySQL binary fields are shown as hexadecimal. Without a selected sort,
+page order comes from the database. Paging does not use a snapshot; concurrent
+changes and equal sort values can shift rows. Metadata lists include up to 2,000
+tables. Redis exposes a database number, key-pattern search through `SCAN`, and
+bounded previews for strings, hashes, lists, sets, sorted sets and streams. A SCAN
+batch can be empty before its cursor reaches zero; use **Continue scan**.
+
+This mode only offers fixed read operations. PostgreSQL uses a read-only session,
+MySQL a read-only transaction, ClickHouse `readonly=1`, and Redis an allowlist of
+read commands. It works on read-only server profiles. Results stay in memory,
+isolated by server. **Remember after successful connection** is enabled by default:
+a successful login saves a profile and its password in the OS credential store
+(Windows Credential Manager on Windows), with no plaintext fallback. Failed logins
+do not overwrite saved credentials. Non-secret account/source metadata is kept in
+`database-connections.json` beside server profiles. Saved connections are offered
+only for the matching server endpoint and database source; the most recent is
+selected automatically. Passwords are resolved by the native backend and never
+returned to the UI. Uncheck the option for a session-only connection. **Close
+session** clears the live session; **Delete saved connection** also removes its
+stored password. If secure saving fails, browsing continues with a visible warning.
+For ClickHouse, **Import password from YAML** reads a local file with
+`ch_default_password` and/or `ch_admin_password` scalar keys. Choose `default` or
+`admin` after import; other secrets are ignored. The file is parsed locally,
+never uploaded. A successfully used imported password follows the same remembering
+option; unused imported credentials are cleared with the session.
+
+The source must provide `sh`, `timeout` and its native CLI: `psql`, `mysql` or
+`mariadb` with JSON functions (MySQL 5.7+/MariaDB 10.2+), `clickhouse-client`, or
+`redis-cli` with `--json` support (Redis 6+). Docker queries run inside the source
+container, including containers without published ports. Host queries use SSH and
+loopback TCP. Discovery reads container metadata and SSH `ss` output (Linux `/proc/net/tcp*`
+is a fallback when `ss` is unavailable); it does not
+scan application files or extract connection strings. A default port without a
+process name is shown as a possible database, not a confirmed engine. Custom
+images, socket-only services and TLS-only endpoints may require additional setup;
+this mode does not install clients, change services or open external ports.
+
 ## Local projects
 
 For the folder you are actually working in.
@@ -387,8 +482,8 @@ Press **`?`** in the app for this list.
 
 | What | Windows | macOS | Linux |
 |---|---|---|---|
-| Profiles, projects, journal | `%APPDATA%\Prystan` | `~/Library/Application Support/Prystan` | `~/.config/prystan` |
-| Registry and Telegram tokens | Credential Manager | Keychain | Secret Service |
+| Profiles, database account metadata, projects, journal | `%APPDATA%\Prystan` | `~/Library/Application Support/Prystan` | `~/.config/prystan` |
+| Database passwords, registry and Telegram tokens | Credential Manager | Keychain | Secret Service |
 | Interface settings | browser local storage inside the app | | |
 
 Passwords and tokens never end up in configuration files.
@@ -423,6 +518,8 @@ app/
   src-tauri/          Rust backend (Tauri 2)
     src/
       main.rs         connections, profiles, projects, app state
+      databases.rs    discovery, fixed SQL/Redis reads, bounded previews
+      database_profiles.rs  account metadata and native credential storage
       containers.rs   container list, actions, logs, stats
       logs.rs         history search, aggregated stack logs
       files.rs        container filesystem via archive API
@@ -438,7 +535,7 @@ app/
       procguard.rs    guaranteed cleanup of child ssh processes
   ui/                 frontend — plain JS modules, no build step
     js/               core, conn, logs, files, term, server, resources,
-                      extras, project, icons, demo
+                      extras, project, databases, nav, icons, demo
     vendor/           xterm.js, CodeMirror (vendored, no CDN)
 ```
 
@@ -449,12 +546,24 @@ persistent agent process for file operations, and ConPTY for interactive termina
 ## Validation
 
 Run `cargo test --manifest-path app/src-tauri/Cargo.toml` for backend tests and
-`node --test tests/ui-contracts.cjs` for frontend operation contracts (Node 18+).
-Two opt-in Docker integration tests create disposable Prystan test resources:
+`node --test tests/*.cjs` for frontend operation contracts (Node 18+).
+Two opt-in Docker integration tests cover the original Compose/container flows:
 with Docker running and `busybox:1.37` available, run
-`cargo test --manifest-path app/src-tauri/Cargo.toml -- --ignored`.
+`cargo test --manifest-path app/src-tauri/Cargo.toml local_ -- --ignored --skip local_database`.
 They exercise multi-file Compose deployment, pull without redeployment, environment
 recreation, anonymous-volume data preservation, and editor backup/metadata behavior.
+
+A separate database integration test creates four labelled containers with no
+published ports and removes only those containers and their anonymous volumes.
+Have `postgres:16-alpine`, `mysql:8.4`,
+`clickhouse/clickhouse-server:26.8-alpine` and `redis:7-alpine` available, then run
+`cargo test --release --manifest-path app/src-tauri/Cargo.toml databases::integration_tests -- --ignored --nocapture`.
+It checks metadata, actual data, pagination, decimal precision, authentication and
+SQL read-only enforcement against all four engines. On Windows it also checks
+secure profile saving, restored authentication, failed-login preservation and
+endpoint isolation. To exercise isolated temporary Windows vault entries alone:
+`cargo test --release --manifest-path app/src-tauri/Cargo.toml database_profiles::tests::local_ -- --ignored`.
+The ClickHouse integration additionally covers bounded previews of large fields.
 
 ## Documentation
 

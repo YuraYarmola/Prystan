@@ -55,6 +55,7 @@ async function connectProfile(id, opts = {}) {
 
 /** Ручне відключення: запамʼятовуємо намір і більше не піднімаємо само. */
 async function disconnectProfile(id) {
+  if (typeof clearDatabaseSession === "function") clearDatabaseSession(id);
   clearRetry(id);
   await setWanted(id, false);
   try { await invoke("disconnect", { id }); } catch {}
@@ -101,6 +102,7 @@ function clearRetry(id) {
 
 /** Втратили зʼєднання (обрив тунелю / демон помер) — піднімаємо, якщо хотіли бути онлайн. */
 function markDown(id, reason) {
+  if (typeof clearDatabaseSession === "function") clearDatabaseSession(id);
   if (!S.conns[id]) return;
   if (id === S.activeConn) {
     rememberNavigation();

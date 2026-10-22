@@ -2,6 +2,8 @@
 
 mod clipboard;
 mod containers;
+mod databases;
+mod database_profiles;
 mod files;
 mod forward;
 mod host;
@@ -29,6 +31,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct ConnEntry {
+    pub database_profile: Profile,
+    pub database_sources: std::sync::Arc<Mutex<Vec<databases::DatabaseSource>>>,
     pub docker: Docker,
     pub tunnel: Option<Child>,
     /// Потік подій піднімається лише коли демон відповідає: інакше він просто
@@ -223,11 +227,12 @@ fn save_profile(state: State<'_, AppState>, mut profile: Profile) -> Vec<Profile
 }
 
 #[tauri::command]
-fn delete_profile(state: State<'_, AppState>, id: String) -> Vec<Profile> {
+fn delete_profile(state: State<'_, AppState>, id: String) -> Result<Vec<Profile>,String> {
+    if id!="local" {database_profiles::forget_server(&state,&id)?;}
     let mut list = load_profiles(&state.profiles_path);
     list.retain(|p| p.id != id || p.id == "local");
     save_profiles_file(&state.profiles_path, &list);
-    list
+    Ok(list)
 }
 
 /* ── локальні проєкти ─────────────────────────────────
@@ -541,6 +546,8 @@ async fn connect(
     state.conns.lock().unwrap().insert(
         profile_id,
         ConnEntry {
+            database_profile: profile.clone(),
+            database_sources: Default::default(),
             docker,
             tunnel,
             events_task,
@@ -829,6 +836,10 @@ fn main() {
             projects_path,
         })
         .invoke_handler(tauri::generate_handler![
+            databases::database_discover,
+            databases::database_browse,
+            databases::database_saved_profiles,
+            databases::database_forget_profile,
             list_profiles,
             save_profile,
             set_autoconnect,
