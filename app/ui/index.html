@@ -13,7 +13,7 @@
     <div class="logo" data-icon="anchor">Pry<span>stan</span></div>
     <button id="palette-btn" class="ghost" data-icon="search" data-i18n-title="app.palette.title"><span data-i18n="app.palette">Ctrl+K</span></button>
     <div class="spacer"></div>
-    <span class="badge" id="fwd-badge" style="display:none" data-icon="plug" data-i18n-title="app.tunnels"><b id="fwd-count">0</b></span>
+    <button type="button" class="tunnel-badge" id="fwd-badge" data-state="idle" aria-controls="tunnel-modal"><span data-icon="plug"></span><span class="tun-dot"></span><strong data-i18n="tun.title"></strong><b id="fwd-count">0</b><span id="fwd-state" aria-live="polite"></span></button>
     <button type="button" class="badge upd" id="update-badge" style="display:none" data-icon="download"><span data-i18n="upd.new"></span></button>
     <button id="settings-btn" class="ghost" data-icon="settings" data-i18n-title="set.title"></button>
     <select id="lang-sel" class="ghost-sel" data-i18n-title="app.lang">
@@ -26,6 +26,10 @@
     <div class="badge" id="perf"></div>
   </header>
 
+  <aside id="tunnel-shelf" class="tunnel-shelf" hidden aria-labelledby="tun-shelf-title">
+    <button type="button" id="tun-shelf-title" class="ghost" data-i18n="tun.current"></button>
+    <div id="tun-live" class="tun-live"></div>
+  </aside>
   <aside id="update-notice" class="update-notice" hidden>
     <div class="update-copy" role="status"><strong id="update-message"></strong><span data-i18n="upd.prompt"></span></div>
     <button type="button" id="update-download" class="primary" data-icon="download"><span data-i18n="upd.download"></span></button>
@@ -412,6 +416,31 @@
     </div>
   </div>
 
+  <div class="modal-back" id="tunnel-modal">
+    <section class="modal tunnel-manager" role="dialog" aria-modal="true" aria-labelledby="tun-title">
+      <div class="mhead"><span data-icon="plug"></span><span id="tun-title" data-i18n="tun.title"></span><button type="button" class="ghost x" data-close="tunnel-modal" data-i18n-aria="tun.close">×</button></div>
+      <div class="mbody">
+        <p class="hint" data-i18n="tun.hint"></p>
+        <div class="tun-list-heading"><h3 data-i18n="tun.connections"></h3><button type="button" id="tun-refresh" data-icon="rotate" data-i18n="common.refresh"></button></div>
+        <p id="tun-list-status" class="tun-error" role="status"></p>
+        <div id="tun-list"></div>
+        <p id="tun-error" class="tun-error" role="alert"></p>
+        <details id="tun-create" class="tun-create"><summary data-i18n="tun.new"></summary>
+        <form id="tun-form" class="tun-form">
+          <label class="tun-wide"><span data-i18n="tun.server"></span><select id="tun-server" required></select></label>
+          <label class="tun-wide"><span data-i18n="tun.name"></span><input id="tun-name" maxlength="120" placeholder="Adminer"></label>
+          <label><span data-i18n="tun.host"></span><input id="tun-host" value="127.0.0.1" required maxlength="253" spellcheck="false"></label>
+          <label><span data-i18n="tun.remotePort"></span><input id="tun-remote" type="number" min="1" max="65535" required placeholder="8081"></label>
+          <label><span data-i18n="tun.localPort"></span><input id="tun-local" type="number" min="1" max="65535" data-i18n-ph="tun.auto"></label>
+          <div class="tun-wide tun-actions"><button type="submit" id="tun-start" class="primary" data-i18n="tun.start"></button><button type="button" id="tun-save" data-i18n="tun.save"></button></div>
+        </form>
+        </details>
+        <div id="tun-presets"></div>
+      </div>
+      <div class="mfoot"><span class="hint" data-i18n="tun.lifecycle"></span><button type="button" id="tun-close-all" data-i18n="tun.stopAll"></button></div>
+    </section>
+  </div>
+
   <div class="modal-back" id="ask-modal">
     <div class="modal" style="width:440px">
       <div class="mhead" id="ask-title"></div>
@@ -689,6 +718,7 @@
 <script src="js/nav.js"></script>
 <script src="js/project.js"></script>
 <script src="js/conn.js"></script>
+<script src="js/tunnels.js"></script>
 <script src="js/logs.js"></script>
 <script src="js/files.js"></script>
 <script src="js/term.js"></script>

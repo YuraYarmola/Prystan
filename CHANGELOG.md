@@ -6,6 +6,47 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-03
+
+Manage SSH tunnels explicitly and keep their state visible across Prystan.
+This release adds the following capabilities since v0.5.0.
+
+### Added
+- SSH tunnel manager for arbitrary TCP services on saved SSH servers, including
+  servers without Docker. Choose an automatic or fixed local port, save settings
+  for manual reuse, copy addresses/SSH commands, open HTTP, stop or reconnect.
+- Persistent tunnel status in the header across all servers and modes, with
+  connecting, active, failed and unknown states and background health checks.
+- Configure tunnels directly from published container ports.
+  Docker is not required for forwarding a server service.
+- A persistent session tunnel strip with per-tunnel off controls across all modes,
+  and labelled container SSH tunnel buttons with active styling and adjacent off.
+
+### Changed
+- Container port actions now prepare a manual connection form instead of implicitly
+  starting SSH. HTTP opening can reuse an existing tunnel; it cannot start one.
+- The SSH tunnels header button has an explicit label and running appearance.
+  The manager puts all current tunnels first, ahead of the collapsible create form.
+- Clicking the tunnel badge opens the manager; stopping all tunnels now asks for
+  confirmation. Disconnecting a server retains stopped entries for manual reconnect.
+- Port forwarding binds only to loopback, checks occupied ports, detects exited
+  SSH processes and cancels pending starts when stopped or disconnected. Saved
+  settings never autostart; SSH status does not guarantee destination health.
+- Opening a local Docker container port no longer creates a fictional tunnel;
+  remote TCP Docker profiles explain that SSH is required for forwarding.
+
+### Connection details
+- Listeners bind only to `127.0.0.1`; SSH uses the saved key or SSH agent without
+  interactive password prompts. Read-only profiles can forward ports, but service
+  credentials and SSH permissions still control what clients can do.
+- State checks run every three seconds; network loss detection also depends on
+  SSH keepalives. An active SSH process does not guarantee destination health.
+- Tunnels close on server disconnect or application exit. Saved settings do not
+  start or reconnect automatically.
+
+![SSH tunnels on container ports](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.6.0/docs/screenshots/ssh-tunnels.png)
+![All-server tunnel manager](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.6.0/docs/screenshots/ssh-tunnel-manager.png)
+
 ## [0.5.0] — 2026-11-03
 
 Run SQL, export results and download database dumps directly in Prystan.

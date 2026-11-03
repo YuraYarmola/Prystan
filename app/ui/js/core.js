@@ -58,7 +58,7 @@ const S = {
   mon: {}, monActive: null, monHist: {}, ctrHist: {},
   ctrStats: {},          // cid -> останні CPU/RAM (щоб бейдж не блимав при перемальовці)
   statsFor: null,        // для якого контейнера вже йде стрім статистики
-  forwards: [], lastEntries: [], snippets: [],
+  forwards: [], tunnelPresets: [], lastEntries: [], snippets: [],
   fsClip: null, fsSelected: null,        // буфер copy/cut і вибраний файл
   theme: "dark",
   logBlock: null, logCarry: "", multiBlock: {},   // стан розбору багаторядкових помилок
@@ -115,7 +115,7 @@ function persist() {
       lastConn: S.activeConn, theme: S.theme, quick: S.quick, treeLayout: S.treeLayout,
       serverPins: S.serverPins, serverRecent: S.serverRecent,
       containerDisplay: S.containerDisplay, containerSort: S.containerSort,
-      snippets: S.snippets, logWrap: S.logWrap, lang: LANG,
+      tunnelPresets: S.tunnelPresets, snippets: S.snippets, logWrap: S.logWrap, lang: LANG,
       cmdHistory: S.cmdHistory, termSuggest: S.termSuggest, tgAlerts: S.tgAlerts,
       tgEvents: S.tgEvents, cfg: S.cfg,
     }));
@@ -134,6 +134,7 @@ function restore() {
     S.treeLayout = s.treeLayout === "flat" ? "flat" : "grouped";
     S.containerDisplay = s.containerDisplay === "table" ? "table" : "tree";
     if (["name","status","cpu","ram"].includes(s.containerSort?.key) && [1,-1].includes(s.containerSort?.dir)) S.containerSort = s.containerSort;
+    if (Array.isArray(s.tunnelPresets)) S.tunnelPresets=s.tunnelPresets.filter(p=>p&&typeof p.id==="string"&&typeof p.conn==="string"&&typeof p.remoteHost==="string"&&Number.isInteger(p.remotePort)&&p.remotePort>0&&p.remotePort<=65535).slice(0,50).map(p=>({id:p.id,conn:p.conn,remoteHost:p.remoteHost,remotePort:p.remotePort,localPort:p.localPort,label:String(p.label||"").slice(0,240),endpoint:String(p.endpoint||"")}));
     if (Array.isArray(s.snippets)) S.snippets = s.snippets;
     if (Array.isArray(s.cmdHistory)) S.cmdHistory = s.cmdHistory;
     if (typeof s.termSuggest === "boolean") S.termSuggest = s.termSuggest;

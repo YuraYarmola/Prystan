@@ -443,6 +443,7 @@ function portsOf(c) {
 }
 
 function containerMenuItems(c) {
+  const tunnelConn=S.activeConn,ssh=profileById(tunnelConn)?.kind==="ssh";
   const run = c.state === "running";
   const ro = isReadonly();
   const ports = portsOf(c);
@@ -458,7 +459,12 @@ function containerMenuItems(c) {
     items.push("-");
     // раніше кнопка вміла лише перший порт — решта була недосяжна
     for (const p of ports) {
-      items.push({ icon: "globe", label: t("ctr.openBrowser") + " " + p, run: () => openContainerPort(c, p) });
+      if(ssh){
+        const f=containerTunnel(tunnelConn,parseInt(p));
+        items.push({icon:"plug",label:t("tun.configure")+" "+p,run:()=>openTunnelManager({conn:tunnelConn,remoteHost:"127.0.0.1",remotePort:parseInt(p),label:c.name+":"+parseInt(p)})});
+        if(f?.status==="active")items.push({icon:"globe",label:t("tun.open")+" · "+t("tun.single")+" "+p,run:()=>openContainerPort(c,p,tunnelConn)});
+        if(f&&["active","starting"].includes(f.status))items.push({icon:"stop",label:t("tun.stopTunnel")+" "+p,run:()=>stopTunnel(f.key)});
+      }else items.push({icon:"globe",label:t("ctr.openBrowser")+" "+p,run:()=>openContainerPort(c,p,tunnelConn)});
     }
   }
   items.push("-");
@@ -834,7 +840,7 @@ function renderDetailHeader(force) {
       c.state === "running" ? (cached ? statsHtml(cached) : "CPU <b>…</b> · RAM <b>…</b>") : ""}</span>
     <span style="flex:1"></span>
     ${typeof databaseContainerEngine === "function" && databaseContainerEngine(c)?`<button data-a="database" ${c.state!=="running"?"disabled":""}>${ic("database")} ${esc(t("db.openContainer"))}</button>`:""}
-    ${ports.length && c.state === "running" ? `<button data-a="open" title="${esc(t("ctr.openBrowser"))}">${ic("globe")} ${esc(ports[0])}</button>` : ""}
+    ${ports.length && c.state === "running" ? activeProfile()?.kind==="ssh"?`<span id="container-tunnels" class="container-tunnels"></span>`:`<button data-a="open" title="${esc(t("ctr.openBrowser"))}">${ic("globe")} ${esc(ports[0])}</button>` : ""}
     ${c.state === "running"
       ? `<button data-a="stop">${ic("stop")} ${t("ctr.stop")}</button><button data-a="restart">${ic("rotate")} ${t("ctr.restart")}</button><button data-a="pause" title="${esc(t("ctr.pause"))}">${ic("pause")}</button>`
       : c.state === "paused"
@@ -858,6 +864,7 @@ function renderDetailHeader(force) {
     act(c, a);
     if (a === "rm") { S.view = "welcome"; S.selected = null; renderDetail(); }
   });
+  renderContainerTunnelControls();
   ensureStats();
 }
 
@@ -1078,6 +1085,7 @@ function buildPalette(q) {
   add("hammer", t("pal.buildImage"), t("pal.action"), () => { S.view = "images"; renderTree(); renderDetail(); $("build-btn").click(); });
   add("plus", t("pal.newContainer"), t("pal.action"), () => { S.view = "images"; renderTree(); renderDetail(); $("create-btn").click(); });
   add("folderPlus", t("proj.add"), t("pal.action"), () => openProjectModal());
+  add("plug", t("tun.title"), t("pal.action"), () => openTunnelManager());
   add("plug", t("pal.closeTunnels"), t("pal.action"), stopAllForwards);
   add("moon", t("pal.toggleTheme"), t("pal.action"), () => setTheme(S.theme === "dark" ? "light" : "dark"));
   add("rotate", t("pal.refreshAll"), t("pal.action"), refreshAll);
@@ -1251,7 +1259,7 @@ function wireGlobal() {
   $("refresh").onclick = () => refreshAll();
   $("theme-btn").onclick = () => setTheme(S.theme === "dark" ? "light" : "dark");
   $("lang-sel").onchange = e => setLang(e.target.value);
-  $("fwd-badge").onclick = stopAllForwards;
+  $("fwd-badge").onclick = () => openTunnelManager();
 
   /* Стандартне меню браузера («Зберегти як…», «Переглянути код») тут ні до чого:
      це застосунок, а не сторінка. Але прибрати його й не дати нічого натомість —
@@ -1353,6 +1361,7 @@ function wireResizer() {
 
   // Не чекаємо повільних або недоступних серверів для перевірки версії.
   scheduleUpdateCheck();
+  wireTunnels();
   await loadProfiles();
   await loadProjects();
   fillProfileForm(null);
@@ -1372,7 +1381,6 @@ function wireResizer() {
     renderPerf();
   }
 
-  refreshForwards();
   syncMonitor();                       // фонові монітори для порогових алертів
   // повне оновлення — рідко, список контейнерів — часто: він і дає відчуття
   // «стан змінився одразу», але коштує один дешевий запит

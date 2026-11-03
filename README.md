@@ -23,21 +23,21 @@ containers and addresses in them are invented.*
 
 ---
 
-## New in 0.5.0
+## New in 0.6.0
 
-Run **SQL** directly against PostgreSQL, MySQL/MariaDB and ClickHouse, view results
-and export JSON or CSV for Excel. Changes require explicit enablement and confirmation.
-Open recognized databases from their containers and download a database dump with
-one click. A permanent server Dashboard button and a background startup update
-offer make navigation and keeping Prystan current easier.
+Open remote TCP services through **SSH tunnels** with explicit manual control.
+Start from a container port or a saved SSH server, choose a local port, save settings
+and copy a ready-to-use address or SSH command. Docker is optional.
 
-The table browser remains available on read-only profiles; arbitrary SQL is blocked
-there. Exports have engine-specific consistency limits — see the [database guide](#databases).
+Tunnel status stays visible across servers and modes. Active container buttons
+turn green and show **Turn off** beside them; a session strip and an all-server
+manager keep every tunnel within reach. Opening a port never starts SSH implicitly.
+Saved settings never autostart.
 
-![SQL console and result export](docs/screenshots/database-sql.png)
+![SSH tunnels on container ports](docs/screenshots/ssh-tunnels.png)
 
-[Database guide](#databases) · [Changes since 0.4.0](CHANGELOG.md#050--2026-11-03) ·
-[Download 0.5.0](https://github.com/YuraYarmola/Prystan/releases/tag/v0.5.0)
+[Tunnel guide](#port-forwarding) · [Changes since 0.5.0](CHANGELOG.md#060--2026-11-03) ·
+[Download 0.6.0](https://github.com/YuraYarmola/Prystan/releases/tag/v0.6.0)
 
 ## Why
 
@@ -186,9 +186,9 @@ a container directly. A single container gets logs, a shell, files and inspect.
 unhealthy but still running pulses amber, anything stopped is a steady grey. A
 container that crashed three times in ten minutes gets a crash-loop badge.
 
-**Ports.** Every published port is clickable — the button opens a menu when there is
-more than one. For an SSH server the app raises a tunnel first, so `localhost` in your
-browser reaches the remote port.
+**Ports.** SSH container ports have labelled **SSH tunnel** buttons. Click one to
+review settings, then explicitly press **Connect**. Active buttons turn green and
+show **Turn off** next to them. Local Docker ports open directly in your browser.
 
 ## Load
 
@@ -447,9 +447,28 @@ static IP settings require a Compose update instead.
 
 ## Port forwarding
 
-The globe next to a running container raises an SSH tunnel to the published port and
-opens the address in your browser. The 🔌 badge in the header counts open tunnels; a
-click closes them all.
+The labelled **SSH tunnel** button next to a running container opens settings for
+its published port. It never starts a tunnel implicitly: review settings and press
+**Connect**. The **SSH tunnels** button is always visible in the header, changes
+appearance when running and shows the count and connection state.
+
+A persistent strip below the header lists session tunnels across all servers, with
+an adjacent **Turn off** button for each. The manager opens with all current tunnels
+first; its new-connection form is collapsible. Container tunnel buttons also turn
+green when active and have their own adjacent **Turn off** control. Opening HTTP
+uses an already active tunnel and never creates a new one automatically.
+
+Choose an SSH server, destination host/port and an optional local port (blank selects
+a free port). Use this for Adminer, database clients or another TCP service without
+publishing a new server port. All listeners bind to `127.0.0.1`. You can copy the
+address or SSH command, open HTTP, stop or reconnect individual tunnels, and save
+settings for manual reuse. SSH authentication uses the profile key or SSH agent;
+interactive password prompts are not supported. Docker is not required.
+
+Status checks run every three seconds; network loss detection also depends on SSH
+keepalives. An active SSH connection does not guarantee the destination service is
+available. Disconnecting a server or exiting Prystan closes its tunnels. Saved
+settings never start automatically. **Stop all** asks for confirmation.
 
 ## Notifications
 

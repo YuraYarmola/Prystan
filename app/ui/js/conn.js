@@ -306,45 +306,18 @@ function wireConnUI() {
   };
 }
 
-/* ── A5/A6: port-forward і відкриття в браузері ── */
-async function openContainerPort(c, mapping) {
-  // mapping: "8081:80" (host:container) з labels списку
-  const hostPort = parseInt(String(mapping).split(":")[0]);
-  if (!hostPort) return;
-  const prof = activeProfile();
-  try {
-    const r = await invoke("forward_start", {
-      conn: S.activeConn,
-      remoteHost: "127.0.0.1",
-      remotePort: hostPort,
-      label: `${c.name}:${hostPort}`,
-    });
-    await refreshForwards();
-    try {
-      await invoke("open_url", { url: r.url });
-      toast(prof.kind === "ssh"
-        ? `${t("ctr.openBrowser")}: ${r.url} → ${prof.host}:${hostPort}`
-        : `${t("ctr.openBrowser")}: ${r.url}`, "ok", 5000);
-    } catch (e) {
-      // браузер не відкрився — принаймні даємо готовий URL
-      await copyText(r.url, true);
-      toast(`${r.url} — ${t("ctr.urlCopied")} (${e})`, "warn", 9000);
-    }
-  } catch (e) { toast("Port-forward: " + e); }
-}
-
-async function refreshForwards() {
-  try {
-    S.forwards = await invoke("forward_list");
-    const badge = $("fwd-badge");
-    badge.style.display = S.forwards.length ? "inline-block" : "none";
-    $("fwd-count").textContent = S.forwards.length;
-    badge.title = S.forwards.map(f => `${f.label} → 127.0.0.1:${f.local_port}`).join("\n");
-  } catch {}
-}
-
-async function stopAllForwards() {
-  for (const f of S.forwards) await invoke("forward_stop", { key: f.key });
-  await refreshForwards();
-  toast(t("conn.tunnelsClosed"), "ok", 2500);
+/* Порт контейнера: SSH-тунель або пряме локальне відкриття. */
+async function openContainerPort(c, mapping, conn=S.activeConn) {
+  const hostPort=parseInt(String(mapping).split(":")[0]);if(!hostPort)return;
+  const prof=profileById(conn);if(!prof)return;
+  try{
+    let url;
+    if(prof.kind==="ssh"){
+      const existing=containerTunnel(conn,hostPort);
+      if(existing?.status==="active"&&!tunnelUI.unknown)url=existing.url;
+      else {openTunnelManager({conn,remoteHost:"127.0.0.1",remotePort:hostPort,label:c.name+":"+hostPort});return;}
+    }else if(prof.kind==="local")url="http://127.0.0.1:"+hostPort;
+    else {toast(t("tun.needSsh"),"warn",6000);return;}
+    await invoke("open_url",{url});
+  }catch(e){toast(String(e),"warn",6500);}
 }

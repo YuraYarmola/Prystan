@@ -380,6 +380,7 @@ async function route(cmd, a = {}) {
       return engineInfo(conn, 0);
     case "disconnect":
       dm.up.delete(a.id);
+      for(const f of dm.forwards||[])if(f.conn===a.id){f.status="stopped";f.error="Server disconnected. Reconnect the tunnel manually.";}
       stopMonitor(a.id);
       return null;
     case "active_connections": return [...dm.up];
@@ -645,9 +646,20 @@ async function route(cmd, a = {}) {
         i * 350));
       return null;
     }
-    case "forward_list": return [];
-    case "forward_start": return { url: "http://127.0.0.1:18080", local_port: 18080, key: "k1" };
-    case "forward_stop": return null;
+    case "forward_list": return clone(dm.forwards||[]);
+    case "forward_start": {
+      const rows=dm.forwards||(dm.forwards=[]),key=a.conn+'|'+a.remoteHost+'|'+a.remotePort;
+      const old=rows.find(f=>f.key===key&&f.status==='active');if(old)return clone(old);
+      const port=a.localPort||18080+rows.length;
+      if(rows.some(f=>f.status==='active'&&f.local_port===port))throw Error('Local port is busy');
+      const row={key,conn:a.conn,server_name:dm.profiles.find(p=>p.id===a.conn)?.name||a.conn,local_port:port,remote_host:a.remoteHost,remote_port:a.remotePort,remote:a.remoteHost+':'+a.remotePort,label:a.label,url:'http://127.0.0.1:'+port,status:'starting',error:'',ssh_command:'ssh -N -L 127.0.0.1:'+port+':'+a.remoteHost+':'+a.remotePort+' demo@203.0.113.17'};
+      dm.forwards=rows.filter(f=>f.key!==key);dm.forwards.push(row);
+      await new Promise(r=>setTimeout(r,600));
+      if(!dm.forwards.includes(row)||row.status!=='starting')throw Error('Tunnel start was cancelled');
+      if(a.remotePort===1){row.status='failed';row.error='Demo: SSH connection refused';throw Error(row.error);}
+      row.status='active';return clone(row);
+    }
+    case "forward_stop": dm.forwards=(dm.forwards||[]).filter(f=>f.key!==a.key);return null;
     case "journal_list": return [
       { ts: Date.now() / 1000 - 120, conn: "web", action: "restart", target: "c2b3c4d5e6f7", detail: "shopfront-api-1", ok: true },
       { ts: Date.now() / 1000 - 900, conn: "web", action: "compose up", target: "shopfront", detail: "5 services", ok: true },

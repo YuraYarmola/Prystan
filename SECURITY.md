@@ -74,6 +74,11 @@ client TLS certificate configuration is not implemented. Use SSH for encrypted a
   service. Mounting the socket does grant that container broad access to the daemon
   while it runs — this is how Trivy inspects local images.
 - **Port forwarding** binds only to `127.0.0.1`, never to a public interface.
+  Tunnel presets contain connection metadata, not passwords, and never autostart.
+  Forwarding uses the system SSH client and existing profile authentication,
+  validates destinations and passes arguments without a shell. The remote SSH
+  account and service credentials still determine access, including on read-only
+  profiles: read-only UI restrictions do not make a forwarded service read-only.
 - **`open_url`** accepts `http`/`https` only, to avoid launching local executables.
 
 ## Supported versions
