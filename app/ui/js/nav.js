@@ -221,6 +221,7 @@ function renderNavigation() {
   $("nav-resources").value = RESOURCE_VIEWS.includes(S.view) ? S.view : "";
   [...$("nav-resources").options].forEach(o => { o.disabled = !!o.value && o.value !== "journal" && !S.conns[S.activeConn]?.dockerOk; });
   $("nav-dashboard").classList.toggle("on",S.view === "dash");
+  $("nav-dashboard-top")?.classList.toggle("on",S.view === "dash");
   $("bulkbar").hidden = mode !== "containers" || !S.conns[S.activeConn]?.dockerOk;
 }
 function renderServerSelector() {
@@ -259,6 +260,7 @@ function wireNavigation() {
   $("nav-modes").querySelectorAll("button").forEach(b => b.onclick = () => switchNavMode(b.dataset.mode));
   $("nav-resources").onchange = e => { if (e.target.value) openNavView(e.target.value); };
   $("nav-dashboard").onclick = () => openNavView("dash");
+  if($("nav-dashboard-top"))$("nav-dashboard-top").onclick=()=>openNavView("dash");
   document.addEventListener("mousedown",e => { if (!$("connbox").contains(e.target)) closeServerPicker(false); });
   $("server-picker").addEventListener("keydown",e => {
     if (e.key === "Escape") { e.preventDefault(); closeServerPicker(); return; }

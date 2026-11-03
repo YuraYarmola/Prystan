@@ -222,3 +222,26 @@ test('switching saved accounts clears the previous account preview and keeps cre
  const h=harness();h.run(`Object.assign(databaseSession(),{savedProfiles:[{id:'next',username:'reader',database:'nextdb'}],databases:['old'],tables:[{name:'private'}],result:{rows:['private']},table:{name:'private'},password:'old-secret'});useSavedDatabaseProfile(databaseSession(),'next')`);
  assert.equal(h.run('databaseSession().databases.length'),0);assert.equal(h.run('databaseSession().result'),null);assert.equal(h.run('databaseSession().table'),null);assert.equal(h.run('databaseSession().password'),'');assert.equal(h.run('databaseSession().database'),'nextdb');
 });
+
+test('SQL console refuses read-only profiles before any command is sent',async()=>{
+ const h=harness();h.run(`databaseSession().sqlText='SELECT 1'`);await h.run('executeDatabaseSql()');assert.equal(h.calls.length,0);
+});
+test('SQL execution captures credentials and cannot repaint a different server',async()=>{
+ let resolve;const h=harness(()=>new Promise(r=>resolve=r));h.run(`S.profiles[0].readonly=false;Object.assign(databaseSession(),{sqlText:'SELECT 1',database:'demo',savedProfileId:'vault-ref'})`);const work=h.run('executeDatabaseSql()');
+ assert.equal(h.calls[0].name,'database_query');assert.equal(h.calls[0].args.request.saved_profile_id,'vault-ref');assert.equal(h.calls[0].args.allowWrite,false);h.run(`S.activeConn='b'`);resolve({columns:['one'],rows:[['1']],more:false});await work;assert.equal(h.run('databaseSession().sqlResult'),undefined);
+});
+test('confirmation cannot execute SQL against a server selected after the dialog opened',async()=>{
+ const h=harness();h.run(`globalThis.pendingApproval=new Promise(r=>globalThis.approve=r);S.profiles[0].readonly=false;ask=()=>pendingApproval;Object.assign(databaseSession(),{sqlText:'DROP TABLE t',sqlWrite:true})`);const work=h.run('executeDatabaseSql()');h.run(`S.activeConn='b'`);h.run('approve(true)');await work;assert.equal(h.calls.length,0);
+});
+test('failed write is shown without automatically retrying the command',async()=>{
+ const h=harness(async()=>{throw Error('Timeout; changes may have applied');});h.run(`S.profiles[0].readonly=false;ask=async()=>true;Object.assign(databaseSession(),{sqlText:'DELETE FROM t',sqlWrite:true})`);await h.run('executeDatabaseSql()');assert.equal(h.calls.length,1);assert.equal(h.calls[0].args.allowWrite,true);assert.match(h.run('databaseSession().sqlError'),/may have applied/);assert.equal(h.run('databaseSession().busy'),false);
+});
+test('dump requests remain bound to the original source and expose no browser password result',async()=>{
+ let resolve;const h=harness(()=>new Promise(r=>resolve=r));h.run(`databaseSession().database='demo';databaseSession().savedProfileId='vault-ref'`);const work=h.run('downloadDatabaseDump()');assert.equal(h.calls[0].name,'database_dump');assert.equal(h.calls[0].args.request.source_id,'docker:one');h.run(`S.activeConn='b'`);resolve({path:'Downloads/demo.dump',bytes:123});await work;assert.equal(h.run('databaseSession().dumpResult'),undefined);
+});
+test('CSV for Excel escapes delimiters/newlines and neutralizes formulas',()=>{
+ const h=harness();const csv=h.run(`sqlCsv({columns:['name','note'],rows:[['=HYPERLINK(1)','a,"b"\\nnext'],['-123',null]]})`);assert.match(csv,/"'=HYPERLINK/);assert.match(csv,/a,""b""\nnext/);assert.match(csv,/"-123",""/);
+});
+test('container database recognition excludes exporters and unrelated images',()=>{
+ const h=harness();assert.equal(h.run(`databaseContainerEngine({image:'registry.example/pgvector:pg16'})`),'postgres');assert.equal(h.run(`databaseContainerEngine({image:'clickhouse/clickhouse-server:26.8'})`),'clickhouse');assert.equal(h.run(`databaseContainerEngine({image:'redis:7'})`),'redis');assert.equal(h.run(`databaseContainerEngine({image:'postgres-exporter:latest'})`),'');assert.equal(h.run(`databaseContainerEngine({image:'my-api:latest'})`),'');
+});

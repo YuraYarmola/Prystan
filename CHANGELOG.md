@@ -6,6 +6,42 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-03
+
+Run SQL, export results and download database dumps directly in Prystan.
+This release adds the following capabilities since v0.4.0.
+
+### Added
+- Check for updates in the background at startup independently of server connections,
+  with a dismissible download prompt and a persistent update badge.
+- A SQL console for PostgreSQL, MySQL/MariaDB and ClickHouse with result grids,
+  JSON/Excel CSV export and Ctrl+Enter. Changes require explicit enablement and
+  per-statement confirmation; read-only server profiles block arbitrary SQL.
+- Direct database access from recognized container rows, menus and details.
+- One-click streamed database exports to Downloads: PostgreSQL custom dumps,
+  MySQL/MariaDB SQL, ClickHouse SQL and Redis logical JSONL. Exports have size/time
+  limits, remove incomplete files and avoid server-side backup files.
+
+### Changed
+- Restore a permanent server Dashboard button beside the main navigation modes.
+
+### Database export notes
+- SQL changes require an explicit toggle and confirmation of the statement and target.
+  A failed or timed-out write may already have applied; there is no automatic rollback.
+- Database dumps stream locally, capped at 2 GiB / about ten minutes. PostgreSQL
+  uses custom-format dumps; MySQL/MariaDB uses single-transaction SQL exports
+  without table-lock requests. Snapshot consistency depends on the storage engine.
+- ClickHouse SQL exports and Redis 7+ logical JSONL exports are not database-wide
+  atomic snapshots. Redis JSONL is not an RDB; restoring it is a separate manual step.
+- The update offer opens the GitHub release page; portable builds are not silently
+  downloaded or installed.
+
+### Screenshots
+
+| SQL console and result export | Database dump download |
+|---|---|
+| ![SQL console](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.5.0/docs/screenshots/database-sql.png) | ![Database dump](https://raw.githubusercontent.com/YuraYarmola/Prystan/v0.5.0/docs/screenshots/database-dump.png) |
+
 ## [0.4.0] — 2026-10-23
 
 Browse SQL databases and Redis directly in Prystan, with table statistics,

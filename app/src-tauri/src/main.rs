@@ -838,6 +838,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             databases::database_discover,
             databases::database_browse,
+            databases::tools::database_query,
+            databases::tools::database_dump,
             databases::database_saved_profiles,
             databases::database_forget_profile,
             list_profiles,

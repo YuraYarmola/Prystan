@@ -495,3 +495,50 @@ async fn clickhouse_large_text_preview_reproduces_overflow_and_reads_bounded_pag
         }
     }
 }
+
+// Лише disposable containers із перевіркою ownership label у Drop.
+#[tokio::test]
+#[ignore = "creates labelled local database fixtures; validates SQL and restores dumps in separate disposable containers"]
+async fn local_sql_console_and_dumps_restore_without_changing_source() {
+    use std::io::Write;
+    fn command_input(id:&str,script:&str,input:&[u8])->std::process::Output{
+        let mut child=Command::new("docker").args(["exec","-i",id,"sh","-c",script]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();child.wait_with_output().unwrap()
+    }
+    let docker=bollard::Docker::connect_with_local_defaults().unwrap();docker.ping().await.unwrap();
+    for(engine,image)in [("postgres","postgres:16-alpine"),("mysql","mysql:8.4"),("clickhouse","clickhouse/clickhouse-server:26.8-alpine"),("redis","redis:7-alpine")]{
+        let source=disposable(engine,image);let mut ready=false;for _ in 0..50{if seed(&source,engine){ready=true;break;}tokio::time::sleep(Duration::from_secs(2)).await;}assert!(ready,"{engine} ready");
+        let store=crate::database_profiles::test_store();let state=&store.state;let profile=crate::Profile{id:"local".into(),kind:"local".into(),..Default::default()};
+        let source_meta=DatabaseSource{id:format!("docker:{}",source.id),engine:engine.into(),name:"fixture".into(),source:"docker".into(),state:"running".into(),port:default_port(engine),address:"Docker network".into(),confirmed:true};
+        state.conns.lock().unwrap().insert("local".into(),crate::ConnEntry{database_profile:profile.clone(),database_sources:std::sync::Arc::new(std::sync::Mutex::new(vec![source_meta.clone()])),docker:docker.clone(),tunnel:None,events_task:None,docker_ok:true});
+        let request=BrowseRequest{source_id:source_meta.id.clone(),database:match engine{"postgres"=>"postgres","mysql"=>"sample","clickhouse"=>"default",_=>"0"}.into(),password:"prystan-disposable".into(),username:if engine=="clickhouse"{"reader".into()}else{String::new()},..Default::default()};
+        if engine!="redis"{
+            let result=tools::query(state,"local",request.clone(),"SELECT id,name,precise FROM sample_rows ORDER BY id LIMIT 2",false).await.unwrap();assert_eq!(result["columns"],json!(["id","name","precise"]));assert_eq!(result["rows"][0][1],Value::Null,"{engine}: NULL");assert_eq!(result["rows"][0][2].as_str(),Some("123456789012345678901234567890.12"),"{engine}: decimal precision");
+            assert!(tools::query(state,"local",request.clone(),"CREATE TABLE blocked (id int)",false).await.is_err());
+            let ddl=if engine=="clickhouse"{"CREATE TABLE sql_test (id UInt32) ENGINE=Memory"}else{"CREATE TABLE sql_test (id int)"};tools::query(state,"local",request.clone(),ddl,true).await.unwrap();tools::query(state,"local",request.clone(),"INSERT INTO sql_test VALUES (42)",true).await.unwrap();
+            let read=tools::query(state,"local",request.clone(),"SELECT * FROM sql_test",false).await.unwrap();assert!(read["rows"][0][0]==json!(42)||read["rows"][0][0]==json!("42"));
+            tools::query(state,"local",request.clone(),"DROP TABLE sql_test",true).await.unwrap();
+            state.conns.lock().unwrap().get_mut("local").unwrap().database_profile.readonly=true;assert!(tools::query(state,"local",request.clone(),"SELECT 1",false).await.is_err());state.conns.lock().unwrap().get_mut("local").unwrap().database_profile.readonly=false;
+        }
+        let dir=state.profiles_path.parent().unwrap();
+        let before=std::fs::read_dir(dir).unwrap().count();
+        let mut invalid=request.clone();invalid.password="definitely-invalid-prystan-password".into();
+        let error=tools::dump_to(state,"local",invalid,dir).await.unwrap_err();
+        assert!(!error.contains("definitely-invalid-prystan-password"));
+        assert_eq!(std::fs::read_dir(dir).unwrap().count(),before,"{engine}: incomplete export leaked");
+        state.conns.lock().unwrap().get_mut("local").unwrap().database_profile.readonly=true;
+        let dump=tools::dump_to(state,"local",request.clone(),state.profiles_path.parent().unwrap()).await.unwrap();let path=std::path::PathBuf::from(dump["path"].as_str().unwrap());let data=std::fs::read(&path).unwrap();assert!(!data.is_empty(),"{engine}: empty dump");
+        let restored=disposable(engine,image);let probe=match engine{"postgres"=>"pg_isready -U postgres","mysql"=>"MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysqladmin -h127.0.0.1 -uroot ping","clickhouse"=>"clickhouse-client --user reader --password prystan-disposable --query 'SELECT 1'",_=>"REDISCLI_AUTH=$REDIS_PASSWORD redis-cli PING"};
+        let mut ready=false;for _ in 0..50{let out=Command::new("docker").args(["exec",&restored.id,"sh","-c",probe]).output().unwrap();if out.status.success(){ready=true;break;}tokio::time::sleep(Duration::from_secs(2)).await;}assert!(ready);
+        if engine=="redis"{
+            assert!(String::from_utf8_lossy(&data).contains("prystan-redis-logical-v1"));
+            for line in String::from_utf8(data).unwrap().lines().skip(1){let item:Value=serde_json::from_str(line).unwrap();let script=format!("REDISCLI_AUTH=$REDIS_PASSWORD redis-cli EVAL {} 0 {} {}",sq("local function unhex(s)return(s:gsub('..',function(x)return string.char(tonumber(x,16))end))end;return redis.call('RESTORE',unhex(ARGV[1]),0,unhex(ARGV[2]))"),sq(item["key_hex"].as_str().unwrap()),sq(item["dump_hex"].as_str().unwrap()));let out=Command::new("docker").args(["exec",&restored.id,"sh","-c",&script]).output().unwrap();assert!(out.status.success());assert!(String::from_utf8_lossy(&out.stdout).contains("OK"));}
+            let out=Command::new("docker").args(["exec",&restored.id,"sh","-c","REDISCLI_AUTH=$REDIS_PASSWORD redis-cli GET sample:key"]).output().unwrap();assert!(String::from_utf8_lossy(&out.stdout).contains("hello <world>"));
+        }else{
+            let restore=match engine{"postgres"=>"pg_restore --exit-on-error --no-owner -U postgres -d postgres","mysql"=>"MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql --binary-mode -h127.0.0.1 -uroot",_=>"clickhouse-client --user reader --password prystan-disposable --multiquery"};let out=command_input(&restored.id,restore,&data);assert!(out.status.success(),"{engine}: restore: {}",String::from_utf8_lossy(&out.stderr));
+            let count=match engine{"postgres"=>"psql -U postgres -At -d postgres -c 'SELECT count(*) FROM sample_rows'","mysql"=>"MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -h127.0.0.1 -uroot -N sample -e 'SELECT count(*) FROM sample_rows'",_=>"clickhouse-client --user reader --password prystan-disposable --query 'SELECT count(*) FROM default.sample_rows'"};
+            for id in [&source.id,&restored.id]{let out=Command::new("docker").args(["exec",id,"sh","-c",count]).output().unwrap();assert!(out.status.success());assert_eq!(String::from_utf8_lossy(&out.stdout).trim(),"105","{engine}: source/restore row count");}
+        }
+        std::fs::remove_file(path).unwrap();eprintln!("{engine}: SQL policies, result types, dump and isolated restore verified");
+    }
+}

@@ -21,12 +21,12 @@ async function discoverDatabases() {
     else if(s.source)s.source=s.sources.find(x=>x.id===s.source.id);
     if(!s.source&&s.sources.filter(x=>x.state==="running").length===1)s.source=s.sources.find(x=>x.state==="running");
   } catch(e){if(sequence===s.sequence){s.error=String(e);s.scanned=true;}}
-  finally {if(sequence===s.sequence){s.scanning=false;repaintDatabases(conn,s);if(s.source)loadSavedDatabaseProfiles(conn,s);}}
+  finally {if(sequence===s.sequence){s.scanning=false;repaintDatabases(conn,s);if(s.pendingContainer){const id="docker:"+s.pendingContainer;delete s.pendingContainer;if(s.sources.some(x=>x.id===id))selectDatabaseSource(id,conn);else{s.error=t("db.containerNotFound");repaintDatabases(conn,s);}}else if(s.source)loadSavedDatabaseProfiles(conn,s);}}
 }
-function selectDatabaseSource(id) {
-  const s=databaseSession();if(s.busy||s.profilesLoading)return;
-  s.sequence++;s.source=s.sources.find(x=>x.id===id);s.username="";s.password="";s.importedCredentials=null;s.database="";s.databases=[];s.tables=[];s.table=null;s.columns=[];s.result=null;s.keys=[];s.key=null;s.value=null;s.offset=0;s.pageSize=100;s.cursor="0";s.nextCursor="0";s.error="";s.savedProfiles=[];s.savedProfileId="";s.profilesLoading=false;s.saveWarning="";s.profileError="";s.tableFilter="";resetDatabaseQuery(s);
-  renderDatabaseSidebar();renderDatabases();$("db-username")?.focus();loadSavedDatabaseProfiles(S.activeConn,s);
+function selectDatabaseSource(id,conn=S.activeConn) {
+  const s=conn===S.activeConn?databaseSession():databaseSessions.get(conn);if(!s||s.busy||s.profilesLoading)return;
+  s.sqlResult=null;s.sqlError="";s.sqlWrite=false;s.workspace="browse";s.dumpResult=null;s.dumpError="";s.sequence++;s.source=s.sources.find(x=>x.id===id);s.username="";s.password="";s.importedCredentials=null;s.database="";s.databases=[];s.tables=[];s.table=null;s.columns=[];s.result=null;s.keys=[];s.key=null;s.value=null;s.offset=0;s.pageSize=100;s.cursor="0";s.nextCursor="0";s.error="";s.savedProfiles=[];s.savedProfileId="";s.profilesLoading=false;s.saveWarning="";s.profileError="";s.tableFilter="";resetDatabaseQuery(s);
+  repaintDatabases(conn,s);if(databaseVisible(conn,s))$("db-username")?.focus();loadSavedDatabaseProfiles(conn,s);
 }
 async function loadSavedDatabaseProfiles(conn,s) {
   if(!s.source||s.profilesLoading)return;
@@ -41,7 +41,7 @@ async function loadSavedDatabaseProfiles(conn,s) {
 }
 function useSavedDatabaseProfile(s,id) {
   const profile=s.savedProfiles.find(p=>p.id===id);s.savedProfileId=profile?.id||"";s.username=profile?.username||"";s.database=profile?.database||"";s.password="";s.importedCredentials=null;s.saveWarning="";
-  s.databases=[];s.tables=[];s.table=null;s.columns=[];s.result=null;s.keys=[];s.key=null;s.value=null;s.offset=0;s.cursor="0";s.nextCursor="0";s.error="";resetDatabaseQuery(s);
+  s.sqlResult=null;s.sqlError="";s.sqlWrite=false;s.dumpResult=null;s.dumpError="";s.databases=[];s.tables=[];s.table=null;s.columns=[];s.result=null;s.keys=[];s.key=null;s.value=null;s.offset=0;s.cursor="0";s.nextCursor="0";s.error="";resetDatabaseQuery(s);
 }
 function editDatabaseCredentials(s) {
   s.savedProfileId="";if($("db-saved-profile"))$("db-saved-profile").value="";
@@ -69,7 +69,7 @@ function renderDatabaseSidebar() {
     tree.innerHTML=`<div class="db-explorer-head"><div class="db-explorer-connection"><select id="db-source-select" aria-label="${esc(t("db.connection"))}" ${s.busy?"disabled":""}>${s.sources.map(x=>`<option value="${esc(x.id)}" ${x.id===s.source.id?"selected":""}>${esc(x.name+" · "+databaseEngines[x.engine])}</option>`).join("")}</select><button id="db-rescan" ${s.busy||s.scanning?"disabled":""} aria-label="${esc(t("db.scan"))}" title="${esc(t("db.scan"))}">${ic("rotate")}</button></div><label>${esc(t("db.database"))}<select id="db-explorer-database" ${s.busy?"disabled":""}>${s.databases.map(d=>`<option ${d===s.database?"selected":""}>${esc(d)}</option>`).join("")}</select></label><button id="db-overview" ${s.busy?"disabled":""}>${esc(t("db.overview"))} (${s.tables.length})</button><label class="sr-only" for="db-table-search">${esc(t("db.tableSearch"))}</label><input id="db-table-search" type="search" placeholder="${esc(t("db.tableSearch"))}" value="${esc(s.tableFilter||"")}"></div><div id="db-table-list" class="db-table-list"></div>`;
     $("db-rescan").onclick=discoverDatabases;
     $("db-source-select").onchange=e=>selectDatabaseSource(e.target.value);
-    $("db-explorer-database").onchange=e=>{s.database=e.target.value;s.tableFilter="";loadDatabaseObjects();};
+    $("db-explorer-database").onchange=e=>{s.database=e.target.value;s.sqlResult=null;s.sqlError="";s.sqlWrite=false;s.dumpResult=null;s.dumpError="";s.tableFilter="";loadDatabaseObjects();};
     $("db-overview").onclick=()=>{s.table=null;s.result=null;renderDatabaseSidebar();renderDatabases();};
     $("db-table-search").oninput=e=>{s.tableFilter=e.target.value;renderDatabaseTableRows(s);};
     renderDatabaseTableRows(s);tree.scrollTop=scroll;return;
@@ -211,11 +211,11 @@ function renderDatabases() {
   if(!S.conns[S.activeConn]?.up){clearDatabaseSession(S.activeConn);box.innerHTML=`<div class="db-intro">${esc(t("tree.connectFirst"))}</div>`;return;}
   const source=s.source;
   box.classList.toggle("db-browser-active",!!s.databases.length);
-  box.innerHTML=`<div class="db-header"><h2>${esc(s.table?s.table.schema+" / "+s.table.name:source?databaseEngines[source.engine]:t("db.title"))}</h2><span class="badge">${esc(t("context.readonly"))}</span></div><p class="db-hint">${esc(source?source.name+" · "+source.address:t("db.intro"))}</p><p class="db-hint db-scope">${esc(t("db.scope",{name:p?.name||""}))}</p>${s.warnings.length?`<details class="db-warnings"><summary>${esc(t("db.discoveryNotes"))} (${s.warnings.length})</summary>${s.warnings.map(w=>`<p>${esc(w)}</p>`).join("")}</details>`:""}<div id="db-feedback" aria-live="polite">${s.saveWarning?`<p class="db-save-warning" role="status">${esc(s.saveWarning)}</p>`:""}${s.profileError?`<p class="db-save-warning" role="status">${esc(s.profileError)}</p>`:""}${s.error?`<div class="db-error" role="alert">${esc(s.error)}<p>${esc(t(s.errorAction&&s.errorAction!=="databases"?"db.readErrorHint":"db.errorHint"))}</p></div>`:""}${s.busy||s.scanning?`<p role="status">${esc(t(s.scanning?"db.scanning":"db.loading"))}</p>`:""}</div><div id="db-workspace"></div>`;
+  box.innerHTML=`<div class="db-header"><h2>${esc(s.workspace==="sql"?"SQL · "+s.database:s.table?s.table.schema+" / "+s.table.name:source?databaseEngines[source.engine]:t("db.title"))}</h2><span class="badge ${s.workspace==="sql"&&s.sqlWrite&&!p?.readonly?"db-write-badge":""}">${esc(t(s.workspace==="sql"&&s.sqlWrite&&!p?.readonly?"db.sqlChangesEnabled":"context.readonly"))}</span></div><p class="db-hint">${esc(source?source.name+" · "+source.address:t("db.intro"))}</p><p class="db-hint db-scope">${esc(t("db.scope",{name:p?.name||""}))}</p>${s.warnings.length?`<details class="db-warnings"><summary>${esc(t("db.discoveryNotes"))} (${s.warnings.length})</summary>${s.warnings.map(w=>`<p>${esc(w)}</p>`).join("")}</details>`:""}<div id="db-feedback" aria-live="polite">${s.saveWarning?`<p class="db-save-warning" role="status">${esc(s.saveWarning)}</p>`:""}${s.profileError?`<p class="db-save-warning" role="status">${esc(s.profileError)}</p>`:""}${s.error?`<div class="db-error" role="alert">${esc(s.error)}<p>${esc(t(s.errorAction&&s.errorAction!=="databases"?"db.readErrorHint":"db.errorHint"))}</p></div>`:""}${s.busy||s.scanning?`<p role="status">${esc(t(s.scanning?"db.scanning":"db.loading"))}</p>`:""}</div><div id="db-workspace"></div>`;
   if(!s.scanned&&!s.scanning&&!s.error){discoverDatabases();return;}
   if(!source){$("db-workspace").innerHTML=`<div class="db-intro"><p>${esc(t("db.choose"))}</p><p class="db-hint">${esc(t("db.limitations"))}</p><button id="db-scan-main" ${s.scanning?"disabled":""}>${esc(t("db.scan"))}</button></div>`;$("db-scan-main").onclick=discoverDatabases;return;}
   const stopped=source.state!=="running",locked=s.busy||s.scanning||s.profilesLoading||stopped;
-  $("db-workspace").innerHTML=`${stopped?`<p class="db-error">${esc(t("ct.notRunning"))}</p>`:""}<details class="db-auth-details" ${!s.databases.length?"open":""}><summary>${esc(t("db.credentials"))}</summary>${s.savedProfiles.length?`<div class="db-saved-profiles"><label>${esc(t("db.savedConnections"))}<select id="db-saved-profile" ${locked?"disabled":""}><option value="">${esc(t("db.newConnection"))}</option>${s.savedProfiles.map(p=>`<option value="${esc(p.id)}" ${s.savedProfileId===p.id?"selected":""}>${esc((p.username||t("db.auto"))+(p.database?" · "+p.database:"")+" · "+t(p.password_saved?"db.passwordStored":"db.auto"))}</option>`).join("")}</select></label><button id="db-delete-saved" type="button" ${locked||!s.savedProfileId?"disabled":""}>${esc(t("db.deleteSaved"))}</button></div>`:""}<form id="db-auth" class="db-auth"><label>${esc(t("db.username"))}<input id="db-username" autocomplete="off" value="${esc(s.username)}" placeholder="${esc(t("db.auto"))}" ${locked?"disabled":""}></label><label>${esc(t("db.password"))}<input id="db-password" type="password" autocomplete="off" value="${esc(s.password)}" placeholder="${esc(t(s.savedProfileId?"db.passwordStored":"db.sessionOnly"))}" ${locked?"disabled":""}></label>${source.engine==="clickhouse"?`<div class="db-secret-import"><button id="db-import" type="button" ${locked?"disabled":""}>${esc(t("db.import"))}</button><input id="db-secret-file" type="file" accept=".yml,.yaml" hidden>${s.importedCredentials?`<label>${esc(t("db.importAccount"))}<select id="db-import-account" ${locked?"disabled":""}>${Object.keys(s.importedCredentials).map(user=>`<option ${s.username===user?"selected":""}>${esc(user)}</option>`).join("")}</select></label>`:""}</div>`:""}${source.engine==="postgres"?`<label>${esc(t("db.initialDatabase"))}<input id="db-initial" value="${esc(s.database)}" placeholder="postgres" ${locked?"disabled":""}></label>`:""}<label class="db-remember"><input id="db-remember" type="checkbox" ${s.remember!==false?"checked":""} ${locked?"disabled":""}>${esc(t("db.rememberSuccess"))}</label><button class="primary" ${locked?"disabled":""}>${esc(t("db.open"))}</button><button id="db-forget" type="button" ${s.busy?"disabled":""}>${esc(t("db.forget"))}</button></form><p class="db-hint">${esc(t("db.credentialsHint"))}</p></details><div id="db-browser"></div>`;
+  $("db-workspace").innerHTML=`${stopped?`<p class="db-error">${esc(t("ct.notRunning"))}</p>`:""}<details class="db-auth-details" ${!s.databases.length?"open":""}><summary>${esc(t("db.credentials"))}</summary>${s.savedProfiles.length?`<div class="db-saved-profiles"><label>${esc(t("db.savedConnections"))}<select id="db-saved-profile" ${locked?"disabled":""}><option value="">${esc(t("db.newConnection"))}</option>${s.savedProfiles.map(p=>`<option value="${esc(p.id)}" ${s.savedProfileId===p.id?"selected":""}>${esc((p.username||t("db.auto"))+(p.database?" · "+p.database:"")+" · "+t(p.password_saved?"db.passwordStored":"db.auto"))}</option>`).join("")}</select></label><button id="db-delete-saved" type="button" ${locked||!s.savedProfileId?"disabled":""}>${esc(t("db.deleteSaved"))}</button></div>`:""}<form id="db-auth" class="db-auth"><label>${esc(t("db.username"))}<input id="db-username" autocomplete="off" value="${esc(s.username)}" placeholder="${esc(t("db.auto"))}" ${locked?"disabled":""}></label><label>${esc(t("db.password"))}<input id="db-password" type="password" autocomplete="off" value="${esc(s.password)}" placeholder="${esc(t(s.savedProfileId?"db.passwordStored":"db.sessionOnly"))}" ${locked?"disabled":""}></label>${source.engine==="clickhouse"?`<div class="db-secret-import"><button id="db-import" type="button" ${locked?"disabled":""}>${esc(t("db.import"))}</button><input id="db-secret-file" type="file" accept=".yml,.yaml" hidden>${s.importedCredentials?`<label>${esc(t("db.importAccount"))}<select id="db-import-account" ${locked?"disabled":""}>${Object.keys(s.importedCredentials).map(user=>`<option ${s.username===user?"selected":""}>${esc(user)}</option>`).join("")}</select></label>`:""}</div>`:""}${source.engine==="postgres"?`<label>${esc(t("db.initialDatabase"))}<input id="db-initial" value="${esc(s.database)}" placeholder="postgres" ${locked?"disabled":""}></label>`:""}<label class="db-remember"><input id="db-remember" type="checkbox" ${s.remember!==false?"checked":""} ${locked?"disabled":""}>${esc(t("db.rememberSuccess"))}</label><button class="primary" ${locked?"disabled":""}>${esc(t("db.open"))}</button><button id="db-forget" type="button" ${s.busy?"disabled":""}>${esc(t("db.forget"))}</button></form><p class="db-hint">${esc(t("db.credentialsHint"))}</p></details><div id="db-tools"></div><div id="db-browser"></div>`;
   $("db-remember").onchange=e=>s.remember=e.target.checked;
   if($("db-saved-profile"))$("db-saved-profile").onchange=e=>{useSavedDatabaseProfile(s,e.target.value);renderDatabases();};
   if($("db-delete-saved"))$("db-delete-saved").onclick=forgetSavedDatabaseProfile;
@@ -228,9 +228,16 @@ function renderDatabases() {
   $("db-auth").onsubmit=e=>{e.preventDefault();connectDatabase();};
   $("db-forget").onclick=()=>{selectDatabaseSource(source.id);};
   if(!s.databases.length)return;
+  $("db-tools").innerHTML=`<div class="db-tools-bar"><div class="seg"><button id="db-browse-mode" class="${s.workspace!=="sql"?"on":""}" ${locked?"disabled":""}>${esc(t("db.browse"))}</button>${source.engine!=="redis"?`<button id="db-sql-mode" class="${s.workspace==="sql"?"on":""}" ${locked?"disabled":""}>SQL</button>`:""}</div><span class="db-tool-target">${esc(source.name)} / ${esc(s.database)}</span><button id="db-dump" ${locked||!s.database?"disabled":""}>${ic("download")} ${esc(t("db.dump"))}</button></div>`;
+
+  $("db-tools").innerHTML+=`<details class="db-dump-info"><summary>${esc(t("db.dumpInfo"))}</summary><p class="db-hint">${esc(t("db.dumpHint"))}</p>${source.engine==="redis"?`<p class="db-hint">${esc(t("db.redisDumpHint"))}</p>`:""}</details>${s.dumping?`<p role="status">${esc(t("db.dumpRunning"))}</p>`:""}${s.dumpError?`<p class="db-error" role="alert">${esc(s.dumpError)}</p>`:""}${s.dumpResult?`<p role="status">${esc(t("db.dumpSaved"))}: <strong>${esc(s.dumpResult.path)}</strong></p>`:""}`;
+  $("db-browse-mode").onclick=()=>{s.workspace="browse";renderDatabases();};
+  if($("db-sql-mode"))$("db-sql-mode").onclick=()=>{s.workspace="sql";renderDatabases();};
+  $("db-dump").onclick=downloadDatabaseDump;
+  if(s.workspace==="sql"&&source.engine!=="redis"){renderSqlConsole(s,locked);return;}
   const redis=source.engine==="redis";
   $("db-browser").innerHTML=`<div class="db-browser-bar db-location"><span>${esc(source.name)} / <strong>${esc(s.database)}</strong></span>${redis?`<label>${esc(t("db.database"))}<input id="db-database" type="number" min="0" max="2147483647" value="${esc(s.database)}" ${locked?"disabled":""}></label>`:""}<button id="db-refresh" ${locked?"disabled":""}>${ic("rotate")} ${esc(t("common.refresh"))}</button></div><div id="db-objects"></div>`;
-  if(redis){$("db-database").onchange=e=>{s.database=e.target.value;loadDatabaseObjects();};$("db-refresh").onclick=loadDatabaseObjects;renderRedisBrowser(s,locked);return;}
+  if(redis){$("db-database").onchange=e=>{s.database=e.target.value;s.dumpResult=null;s.dumpError="";loadDatabaseObjects();};$("db-refresh").onclick=loadDatabaseObjects;renderRedisBrowser(s,locked);return;}
   $("db-refresh").onclick=()=>s.table?refreshDatabaseRows():loadDatabaseObjects();
   $("db-objects").innerHTML=`<div id="db-preview"></div>`;
   if(!s.table) {
@@ -284,4 +291,62 @@ function renderRedisBrowser(s,locked) {
   $("db-key-search").onsubmit=e=>{e.preventDefault();s.pattern=$("db-pattern").value;s.cursor="0";databaseOperation("keys");};
   $("db-more-keys").onclick=()=>{s.cursor=s.nextCursor;databaseOperation("keys");};
   $("db-objects").querySelectorAll("[data-key]").forEach(b=>b.onclick=()=>{s.key=s.keys[Number(b.dataset.key)];s.value=null;databaseOperation("value");});
+}
+function databaseContainerEngine(c) {
+  const image=(c.image||"").split("@")[0].split("/").pop().split(":")[0];
+  if(/^(postgres|postgresql|postgis|pgvector|timescaledb|timescaledb-ha)$/.test(image))return "postgres";
+  if(/^(mysql|mysql-server|mariadb|mariadb-server)$/.test(image))return "mysql";
+  if(image==="clickhouse-server")return "clickhouse";
+  if(/^(redis|redis-stack|redis-stack-server)$/.test(image))return "redis";
+  return "";
+}
+async function openContainerDatabase(c) {
+  if(!databaseContainerEngine(c)||c.state!=="running")return;
+  const conn=S.activeConn,s=databaseSession();if(s.busy||s.profilesLoading)return;s.pendingContainer=c.id;
+  switchNavMode("databases");if(s.scanning)return;
+  if(!s.sources.some(x=>x.id==="docker:"+c.id)){await discoverDatabases();return;}
+  if(S.activeConn!==conn||databaseSessions.get(conn)!==s)return;
+  if(s.sources.some(x=>x.id==="docker:"+c.id)){
+    delete s.pendingContainer;selectDatabaseSource("docker:"+c.id);
+    // Вхід залишається явним: спершу показуємо правильне джерело й збережений профіль.
+  }else{s.error=t("db.containerNotFound");repaintDatabases(conn,s);}
+}
+function databaseToolRequest(s) {return {source_id:s.source.id,action:"databases",database:s.database,username:s.username,password:s.password,saved_profile_id:s.savedProfileId||""};}
+async function executeDatabaseSql() {
+  const conn=S.activeConn,s=databaseSession();if(s.busy||s.profilesLoading||!s.source||activeProfile()?.readonly)return;
+  const sql=s.sqlText||"",write=!!s.sqlWrite,source=s.source.id,sequence=s.sequence,request=databaseToolRequest(s);
+  if(!sql.trim())return;
+  if(write){const approved=await ask({title:t("db.sqlWriteConfirm"),text:`${esc(t("db.sqlWriteWarning"))}<br><strong>${esc(activeProfile()?.name)} / ${esc(s.source.name)} / ${esc(s.database)}</strong><pre class="db-confirm-sql">${esc(sql)}</pre>`,okLabel:t("db.sqlRun")});if(!approved)return;}
+  if(S.activeConn!==conn||databaseSessions.get(conn)!==s||s.sequence!==sequence||s.source?.id!==source||s.busy)return;
+  s.busy=true;s.sqlError="";s.sqlResult=null;repaintDatabases(conn,s);
+  try{const result=await invoke("database_query",{conn,request,sql,allowWrite:write});if(databaseSessions.get(conn)===s&&s.sequence===sequence){s.sqlResult=result;s.sqlResultText=sql;}}
+  catch(e){if(databaseSessions.get(conn)===s&&s.sequence===sequence)s.sqlError=String(e);}
+  finally{if(databaseSessions.get(conn)===s&&s.sequence===sequence){s.busy=false;repaintDatabases(conn,s);if(s.sqlResult&&databaseVisible(conn,s))$("db-sql-result")?.scrollIntoView?.({block:"nearest"});}}
+}
+async function downloadDatabaseDump() {
+  const conn=S.activeConn,s=databaseSession();if(s.busy||s.profilesLoading||!s.database||!s.source)return;
+  const sequence=s.sequence,request=databaseToolRequest(s);s.busy=true;s.dumpResult=null;s.dumpError="";s.dumping=true;repaintDatabases(conn,s);
+  try{const result=await invoke("database_dump",{conn,request});if(databaseSessions.get(conn)===s&&s.sequence===sequence){s.dumpResult=result;
+      if(typeof DEMO!=="undefined"&&DEMO&&result.demoContent){const url=URL.createObjectURL(new Blob([result.demoContent],{type:"text/plain"}));const a=document.createElement("a");a.href=url;a.download=result.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+    }}
+  catch(e){if(databaseSessions.get(conn)===s&&s.sequence===sequence)s.dumpError=String(e);}
+  finally{if(databaseSessions.get(conn)===s&&s.sequence===sequence){s.busy=false;s.dumping=false;repaintDatabases(conn,s);}}
+}
+function renderSqlConsole(s,locked) {
+  const ro=!!activeProfile()?.readonly;
+  $("db-browser").innerHTML=`<section class="db-sql"><label for="db-sql-text">SQL · ${esc(s.database)}</label><textarea id="db-sql-text" spellcheck="false" placeholder="SELECT * FROM … LIMIT 100" ${locked||ro?"disabled":""}>${esc(s.sqlText||"")}</textarea><div class="db-browser-bar"><button id="db-sql-run" class="${s.sqlWrite?"danger":"primary"}" ${locked||ro?"disabled":""}>${esc(t("db.sqlRun"))} <small>Ctrl+Enter</small></button><label class="db-write-toggle"><input id="db-sql-write" type="checkbox" ${s.sqlWrite?"checked":""} ${locked||ro?"disabled":""}>${esc(t("db.sqlAllowWrite"))}</label></div><p class="db-hint">${esc(t(ro?"db.sqlReadonlyProfile":s.sqlWrite?"db.sqlWriteWarning":"db.sqlReadHint"))}</p>${s.sqlError?`<p class="db-error" role="alert">${esc(s.sqlError)}</p>`:""}<div id="db-sql-result"></div></section>`;
+  $("db-sql-text").oninput=e=>s.sqlText=e.target.value;
+  $("db-sql-text").onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();executeDatabaseSql();}};
+  $("db-sql-write").onchange=e=>{s.sqlWrite=e.target.checked;renderDatabases();};
+  $("db-sql-run").onclick=executeDatabaseSql;
+  if(s.sqlResult){const r=s.sqlResult;$("db-sql-result").innerHTML=`<div class="db-browser-bar" role="status"><strong>${esc(t("db.sqlDone"))} · ${r.rows.length} ${esc(t("db.rowCount"))} · ${Number(r.elapsed_ms)||0} ms</strong><button id="db-sql-json">JSON</button><button id="db-sql-csv">${esc(t("db.sqlCsv"))}</button></div>${r.more?`<p class="db-save-warning">${esc(t("db.sqlLimit"))}</p>`:""}${databaseGrid(r.columns,r.rows)}`;$("db-sql-json").onclick=()=>exportSqlResult("json");$("db-sql-csv").onclick=()=>exportSqlResult("csv");}
+}
+function sqlCsv(result) {
+  const cell=v=>{let text=v===null?"":typeof v==="object"?JSON.stringify(v):String(v);if(typeof v==="string"&&/^\s*[=+@-]/.test(text)&&!/^\s*-?\d+(\.\d+)?\s*$/.test(text))text="'"+text;return '"'+text.replace(/"/g,'""')+'"';};
+  return '\ufeff'+[result.columns,...result.rows].map(row=>row.map(cell).join(',')).join('\r\n');
+}
+function exportSqlResult(format) {
+  const s=databaseSession();if(!s.sqlResult)return;const r=s.sqlResult;
+  const payload={database:s.database,source:s.source.name,columns:r.columns,rows:r.rows,more:r.more,elapsed_ms:r.elapsed_ms};
+  const url=URL.createObjectURL(new Blob([format==="csv"?sqlCsv(r):JSON.stringify(payload,null,2)],{type:format==="csv"?"text/csv;charset=utf-8":"application/json"}));const a=document.createElement("a");a.href=url;a.download="query-result."+format;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }

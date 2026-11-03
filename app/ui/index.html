@@ -14,7 +14,7 @@
     <button id="palette-btn" class="ghost" data-icon="search" data-i18n-title="app.palette.title"><span data-i18n="app.palette">Ctrl+K</span></button>
     <div class="spacer"></div>
     <span class="badge" id="fwd-badge" style="display:none" data-icon="plug" data-i18n-title="app.tunnels"><b id="fwd-count">0</b></span>
-    <span class="badge upd" id="update-badge" style="display:none" data-icon="download"><span data-i18n="upd.new"></span></span>
+    <button type="button" class="badge upd" id="update-badge" style="display:none" data-icon="download"><span data-i18n="upd.new"></span></button>
     <button id="settings-btn" class="ghost" data-icon="settings" data-i18n-title="set.title"></button>
     <select id="lang-sel" class="ghost-sel" data-i18n-title="app.lang">
       <option value="uk">Українська</option>
@@ -26,6 +26,11 @@
     <div class="badge" id="perf"></div>
   </header>
 
+  <aside id="update-notice" class="update-notice" hidden>
+    <div class="update-copy" role="status"><strong id="update-message"></strong><span data-i18n="upd.prompt"></span></div>
+    <button type="button" id="update-download" class="primary" data-icon="download"><span data-i18n="upd.download"></span></button>
+    <button type="button" id="update-later"><span data-i18n="upd.later"></span></button>
+  </aside>
   <div class="loadbar" id="loadbar"></div>
 
   <main>
@@ -57,6 +62,7 @@
         <button data-mode="databases" data-icon="database"><span data-i18n="db.title"></span></button>
         <button data-mode="projects" data-icon="folderCode"><span data-i18n="nav.projects"></span></button>
       </div>
+      <button id="nav-dashboard-top" class="nav-dashboard-top" data-icon="grid"><span data-i18n="nav.dashboard"></span></button>
       <div id="projbox" hidden></div>
       <div class="bar" id="container-search">
         <input id="filter" type="search" data-i18n-ph="app.filter" data-i18n-aria="app.filter" />

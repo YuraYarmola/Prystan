@@ -3,6 +3,27 @@
 
 const I18N = {
   uk: {
+    "db.dumpInfo": "Як створюється дамп",
+    "db.redisDumpHint": "Redis 7+: логічний JSONL-експорт, key_hex/dump_hex і абсолютний expire_at_ms. Це не RDB; відновлення — окрема дія через RESTORE зі збереженням TTL.",
+
+    "db.openContainer": "Відкрити базу",
+    "db.containerNotFound": "Джерело БД не знайдено на цьому сервері. Оновіть пошук і повторіть.",
+    "db.browse": "Оглядач",
+    "db.dump": "Завантажити дамп БД",
+    "db.dumpHint": "Експорт лише читання в Завантаження, до 2 ГіБ / 10 хв. PostgreSQL: знімок, коротке очікування блокування схеми; MySQL: без блокування таблиць, узгоджено для InnoDB; ClickHouse/Redis: без спільного знімка всієї БД. Читання створює навантаження.",
+    "db.dumpSaved": "Дамп збережено",
+    "db.dumpRunning": "Експорт у локальний файл… Залиште підключення відкритим.",
+    "db.sqlRun": "Виконати SQL",
+    "db.sqlAllowWrite": "Дозволити зміни",
+    "db.sqlChangesEnabled": "Зміни дозволені",
+    "db.sqlReadonlyProfile": "Довільний SQL недоступний на read-only профілях сервера. Оглядач таблиць залишається доступним.",
+    "db.sqlReadHint": "SELECT/WITH, по одному запиту. До 1 000 рядків / 1 МіБ / 20 секунд. Експорт містить лише показаний результат; для великих запитів додайте LIMIT.",
+    "db.sqlWriteWarning": "SQL виконується з правами користувача БД та може змінити або видалити дані. Автоматичного відкочування немає. Після помилки зміни вже могли застосуватися.",
+    "db.sqlWriteConfirm": "Виконати SQL із дозволеними змінами?",
+    "db.sqlDone": "Виконано",
+    "db.sqlLimit": "Показано й експортовано лише перші 1 000 рядків. Звузьте запит для повного результату.",
+    "db.sqlCsv": "CSV для Excel",
+
     "db.pageSizeHint": "До {n} рядків на сторінку",
     "db.retry": "Повторити читання",
     "db.readErrorHint": "Повторіть читання або оновіть список таблиць, якщо структура змінилася.",
@@ -635,6 +656,9 @@ const I18N = {
     "find.hostOnly": "Пошук доступний для сервера й проєктів",
     /* оновлення */
     "upd.new": "оновлення",
+    "upd.prompt": "Завантажте нову версію зі сторінки релізу.",
+    "upd.download": "Завантажити оновлення",
+    "upd.later": "Пізніше",
     "upd.available": "Доступна версія {v}",
     "upd.latest": "У вас найсвіжіша версія ({v})",
     "upd.check": "Перевірити оновлення",
@@ -734,6 +758,27 @@ const I18N = {
   },
 
   ru: {
+    "db.dumpInfo": "Как создаётся дамп",
+    "db.redisDumpHint": "Redis 7+: логический JSONL-экспорт, key_hex/dump_hex и абсолютный expire_at_ms. Это не RDB; восстановление отдельно через RESTORE с сохранением TTL.",
+
+    "db.openContainer": "Открыть базу",
+    "db.containerNotFound": "Источник БД не найден на этом сервере. Обновите поиск и повторите.",
+    "db.browse": "Обзор",
+    "db.dump": "Скачать дамп БД",
+    "db.dumpHint": "Экспорт только чтение в Загрузки, до 2 ГиБ / 10 мин. PostgreSQL: снимок, короткое ожидание блокировки схемы; MySQL: без блокировки таблиц, согласованно для InnoDB; ClickHouse/Redis: без общего снимка БД. Чтение создаёт нагрузку.",
+    "db.dumpSaved": "Дамп сохранён",
+    "db.dumpRunning": "Экспорт в локальный файл… Оставьте подключение открытым.",
+    "db.sqlRun": "Выполнить SQL",
+    "db.sqlAllowWrite": "Разрешить изменения",
+    "db.sqlChangesEnabled": "Изменения разрешены",
+    "db.sqlReadonlyProfile": "Произвольный SQL недоступен на read-only профилях сервера. Обзор таблиц остаётся доступным.",
+    "db.sqlReadHint": "SELECT/WITH, по одному запросу. До 1 000 строк / 1 МиБ / 20 секунд. Экспорт содержит только показанный результат; для больших запросов добавьте LIMIT.",
+    "db.sqlWriteWarning": "SQL выполняется с правами пользователя БД и может изменить или удалить данные. Автоматического отката нет. После ошибки изменения уже могли примениться.",
+    "db.sqlWriteConfirm": "Выполнить SQL с разрешёнными изменениями?",
+    "db.sqlDone": "Выполнено",
+    "db.sqlLimit": "Показаны и экспортированы только первые 1 000 строк. Уточните запрос для полного результата.",
+    "db.sqlCsv": "CSV для Excel",
+
     "db.pageSizeHint": "До {n} строк на странице",
     "db.retry": "Повторить чтение",
     "db.readErrorHint": "Повторите чтение или обновите список таблиц, если структура изменилась.",
@@ -1165,6 +1210,9 @@ const I18N = {
     "find.result": "Найдено: {n} · {ms} мс",
     "find.hostOnly": "Поиск доступен для сервера и проектов",
     "upd.new": "обновление",
+    "upd.prompt": "Скачайте новую версию со страницы релиза.",
+    "upd.download": "Скачать обновление",
+    "upd.later": "Позже",
     "upd.available": "Доступна версия {v}",
     "upd.latest": "У вас самая свежая версия ({v})",
     "upd.check": "Проверить обновления",
@@ -1257,6 +1305,27 @@ const I18N = {
   },
 
   en: {
+    "db.dumpInfo": "About database dumps",
+    "db.redisDumpHint": "Redis 7+: logical JSONL export with key_hex/dump_hex and absolute expire_at_ms. This is not RDB; restore separately with RESTORE while preserving expiration.",
+
+    "db.openContainer": "Open database",
+    "db.containerNotFound": "Database source was not found on this server. Rescan and retry.",
+    "db.browse": "Browse",
+    "db.dump": "Download database dump",
+    "db.dumpHint": "Read-only export to Downloads, up to 2 GiB / 10 minutes. PostgreSQL: snapshot, short schema-lock wait; MySQL: no table locks, consistent for InnoDB; ClickHouse/Redis: no database-wide snapshot. Reads still create load.",
+    "db.dumpSaved": "Dump saved",
+    "db.dumpRunning": "Exporting to a local file… Keep the connection open.",
+    "db.sqlRun": "Run SQL",
+    "db.sqlAllowWrite": "Allow changes",
+    "db.sqlChangesEnabled": "Changes enabled",
+    "db.sqlReadonlyProfile": "Arbitrary SQL is disabled on read-only server profiles. The table browser remains available.",
+    "db.sqlReadHint": "SELECT/WITH, one statement at a time. Up to 1,000 result rows / 1 MiB / 20 seconds. Export contains only the displayed result; add LIMIT for large queries.",
+    "db.sqlWriteWarning": "SQL runs with this database account’s privileges and may change or delete data. Statements are not automatically rolled back. After an error, changes may already have applied.",
+    "db.sqlWriteConfirm": "Execute SQL with changes allowed?",
+    "db.sqlDone": "Executed",
+    "db.sqlLimit": "Only the first 1,000 rows are displayed and exported. Narrow the query to get the complete result.",
+    "db.sqlCsv": "CSV for Excel",
+
     "db.pageSizeHint": "Up to {n} rows per page",
     "db.retry": "Retry reading",
     "db.readErrorHint": "Retry reading, or refresh the table list if its structure changed.",
@@ -1687,6 +1756,9 @@ const I18N = {
     "find.result": "Found: {n} · {ms} ms",
     "find.hostOnly": "Search works for servers and projects",
     "upd.new": "update",
+    "upd.prompt": "Download the new version from the release page.",
+    "upd.download": "Download update",
+    "upd.later": "Later",
     "upd.available": "Version {v} is available",
     "upd.latest": "You are on the latest version ({v})",
     "upd.check": "Check for updates",
@@ -1802,6 +1874,7 @@ function setLang(code, silent) {
     if (typeof renderProfileList === "function") renderProfileList();
     if (typeof renderProjectList === "function") renderProjectList();
     if (typeof renderPerf === "function") renderPerf();
+    if (typeof renderUpdateNotice === "function") renderUpdateNotice();
     if (typeof renderSnippets === "function") renderSnippets();
   }
 }

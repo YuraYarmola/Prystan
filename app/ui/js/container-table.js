@@ -120,7 +120,7 @@ function renderContainerTable() {
       <td><span class="ct-status ${isProblem(c) ? "problem" : ""}" title="${esc(S.pending[c.id] ? t("common.loading") : c.status)}">${S.pending[c.id] ? `<span class="spin"></span>` : `<span class="cdot ${c.state === "running" && !isProblem(c) ? "up" : ""}"></span>`}${esc(containerStateLabel(c))}</span></td>
       <td class="ct-number">${metric(c,"cpu")}</td><td class="ct-number">${metric(c,"ram")}</td>
       <td class="ct-ports"><span title="${esc(c.ports)}">${esc(c.ports || "—")}</span></td>
-      <td class="ct-actions"><button data-ct-action="logs" title="${esc(t("tab.logs"))}" aria-label="${esc(t("tab.logs")+": "+c.name)}">${ic("list")}</button><button data-ct-action="menu" title="${esc(t("nav.actions"))}" aria-label="${esc(t("nav.actions")+": "+c.name)}">${ic("more")}</button></td></tr>`).join("")}</tbody></table>`;
+      <td class="ct-actions">${typeof databaseContainerEngine === "function" && databaseContainerEngine(c)?`<button data-ct-action="database" title="${esc(t("db.openContainer"))}" aria-label="${esc(t("db.openContainer")+": "+c.name)}" ${c.state!=="running"?"disabled":""}>${ic("database")}</button>`:""}<button data-ct-action="logs" title="${esc(t("tab.logs"))}" aria-label="${esc(t("tab.logs")+": "+c.name)}">${ic("list")}</button><button data-ct-action="menu" title="${esc(t("nav.actions"))}" aria-label="${esc(t("nav.actions")+": "+c.name)}">${ic("more")}</button></td></tr>`).join("")}</tbody></table>`;
   if (!rows.length) box.insertAdjacentHTML("beforeend", `<div class="nav-empty">${esc(t(S.loading ? "common.loading" : S.containers.length ? "nav.noContainers" : "nav.emptyContainers"))}${S.containers.length ? `<button data-ct-clear>${esc(t("nav.clearFilters"))}</button>` : ""}</div>`);
   state.scroll = scroll;
   if (!S.loading && paneActive) { box.scrollTop = scroll; state.restoreScroll = false; }
@@ -159,6 +159,7 @@ function wireContainerTable() {
       if (button.checked) S.bulkSel.add(c.id); else S.bulkSel.delete(c.id);
       renderTree(); return;
     }
+    if (button?.dataset.ctAction === "database") return openContainerDatabase(c);
     if (button?.dataset.ctAction === "menu") { const r=button.getBoundingClientRect(); showContextMenu(r.left,r.bottom,containerMenuItems(c)); }
     else openTableContainer(c,button?.dataset.ctAction === "logs");
   };

@@ -385,6 +385,16 @@ async function route(cmd, a = {}) {
     case "active_connections": return [...dm.up];
 
     /* контейнери */
+    case "database_query": {
+      if(dm.profiles.find(p=>p.id===conn)?.readonly)throw Error('Read-only server profile');
+      if(!a.allowWrite&&!/^\s*(SELECT|WITH)\b/i.test(a.sql))throw Error('Read mode accepts SELECT/WITH');
+      if(/broken|invalid/i.test(a.sql))throw Error('Demo SQL syntax error');
+      return /^\s*(SELECT|WITH)\b/i.test(a.sql)?{columns:['id','name'],rows:[['1',null],['2','Demo user 2'],['3','Demo user 3']],more:false,elapsed_ms:12}:{columns:[],rows:[],more:false,elapsed_ms:8};
+    }
+    case "database_dump": {
+      const text='-- Prystan DEMO logical export; invented data only.\nCREATE TABLE demo_users (id INTEGER, name TEXT);\nINSERT INTO demo_users VALUES (1, \'Demo user\');\n';
+      return {path:'DEMO-database.sql',filename:'DEMO-database.sql',bytes:text.length,demoContent:text};
+    }
     case "database_discover": {
       if(dm.dockerDown.has(conn))return {sources:[{id:'host:clickhouse:9000',name:'ClickHouse :9000',engine:'clickhouse',source:'host',state:'running',address:'127.0.0.1:9000',confirmed:false,port:9000}],warnings:[]};
       const sources=(D_CONTAINERS[conn]||[]).filter(c=>/postgres|redis|clickhouse/.test(c.image)).map(c=>({id:'docker:'+c.id,name:c.name,engine:c.image.includes('postgres')?'postgres':c.image.includes('redis')?'redis':'clickhouse',source:'docker',state:c.state,address:c.ports||'Docker network',confirmed:true,port:5432}));

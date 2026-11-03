@@ -46,7 +46,18 @@ client TLS certificate configuration is not implemented. Use SSH for encrypted a
   through container exec or SSH, without granting an interactive shell. The backend
   resolves the source on the selected server, quotes identifiers, rejects unknown
   operations and enables native SQL read-only settings. Redis uses a read-command
-  allowlist with SCAN instead of KEYS. There is no arbitrary query/command input.
+  allowlist with SCAN instead of KEYS. Arbitrary SQL is a separate explicit console,
+  blocked entirely on read-only server profiles. Its default mode uses native
+  read-only controls; change mode requires an explicit toggle and confirmation
+  of each statement. One statement is accepted, with CLI commands disabled.
+  SQL account permissions remain essential; there is no automatic rollback or
+  retry after a failed write. Result exports exclude credentials; CSV guards
+  formula-like text. Database dumps stream to local Downloads, capped at 2 GiB
+  and about ten minutes, removing incomplete files on failure. They contain
+  sensitive data and inherit Windows directory ACLs (Unix files use mode 0600).
+  Exports avoid table-lock requests where supported, but still create load;
+  MySQL nontransactional tables, ClickHouse and Redis lack a global consistent
+  snapshot. Redis uses EVAL_RO/SCAN/DUMP, never BGSAVE or a server-side backup file.
   Result caches and live credentials are cleared on disconnect. Opt-in remembering
   (enabled by default) stores passwords only in the native OS credential store,
   after a successful login, with no plaintext fallback. The metadata index contains

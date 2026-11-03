@@ -1,4 +1,5 @@
-//! Лише фіксовані операції читання. SQL і команди оболонки з UI не приймаємо.
+#[path = "database_tools.rs"]
+pub mod tools;
 use crate::AppState;
 use bollard::{
     exec::{CreateExecOptions, StartExecResults},

@@ -453,6 +453,7 @@ function containerMenuItems(c) {
     { icon: "folder", label: t("tab.files"), run: () => open("files") },
     { icon: "info", label: t("tab.inspect"), run: () => open("inspect") },
   ];
+  if (typeof databaseContainerEngine === "function" && databaseContainerEngine(c)) items.unshift({icon:"database",label:t("db.openContainer"),disabled:!run,run:()=>openContainerDatabase(c)});
   if (ports.length && run) {
     items.push("-");
     // раніше кнопка вміла лише перший порт — решта була недосяжна
@@ -832,6 +833,7 @@ function renderDetailHeader(force) {
     <span class="badge stats" id="livestats" style="${c.state === "running" ? "" : "display:none"}">${
       c.state === "running" ? (cached ? statsHtml(cached) : "CPU <b>…</b> · RAM <b>…</b>") : ""}</span>
     <span style="flex:1"></span>
+    ${typeof databaseContainerEngine === "function" && databaseContainerEngine(c)?`<button data-a="database" ${c.state!=="running"?"disabled":""}>${ic("database")} ${esc(t("db.openContainer"))}</button>`:""}
     ${ports.length && c.state === "running" ? `<button data-a="open" title="${esc(t("ctr.openBrowser"))}">${ic("globe")} ${esc(ports[0])}</button>` : ""}
     ${c.state === "running"
       ? `<button data-a="stop">${ic("stop")} ${t("ctr.stop")}</button><button data-a="restart">${ic("rotate")} ${t("ctr.restart")}</button><button data-a="pause" title="${esc(t("ctr.pause"))}">${ic("pause")}</button>`
@@ -839,7 +841,7 @@ function renderDetailHeader(force) {
       ? `<button data-a="unpause">${ic("play")} ${t("ctr.unpause")}</button>`
       : `<button data-a="start" class="primary">${ic("play")} ${t("ctr.start")}</button>`}
     <button data-a="rm" class="danger" title="${esc(t("common.delete"))}">${ic("trash")}</button>`;
-  h.querySelectorAll("button[data-a]").forEach(b => { b.disabled = b.dataset.a !== "open" && isReadonly(); });
+  h.querySelectorAll("button[data-a]").forEach(b => { b.disabled = b.dataset.a === "database" ? c.state !== "running" : b.dataset.a !== "open" && isReadonly(); });
   h.querySelectorAll("button").forEach(b => b.onclick = async ev => {
     const a = b.dataset.a;
     if (a === "open") {
@@ -850,6 +852,7 @@ function renderDetailHeader(force) {
         icon: "globe", label: p, run: () => openContainerPort(c, p),
       })));
     }
+    if (a === "database") return openContainerDatabase(c);
     if (!guardRW("guard.containerAction")) return;
     if (a === "rm" && !(await confirmDanger(t("ctr.deleteQ"), t("ctr.deleteText", { name: esc(c.name) })))) return;
     act(c, a);
@@ -999,19 +1002,36 @@ function renderPerf() {
 }
 
 /* ═══ перевірка оновлень ═══ */
-async function checkUpdate(manual) {
+let updateCheckPromise = null, dismissedUpdate = "";
+function renderUpdateNotice() {
+  const r = S.update, available = !!r?.newer;
+  const badge = $("update-badge"), notice = $("update-notice");
+  badge.style.display = available ? "inline-flex" : "none";
+  badge.title = available ? t("upd.available", {v:r.latest}) : "";
+  badge.onclick = () => { dismissedUpdate = ""; renderUpdateNotice(); };
+  notice.hidden = !available || dismissedUpdate === r.latest;
+  if (!available) return;
+  $("update-message").textContent = t("upd.available", {v:r.latest});
+  $("update-download").onclick = () => invoke("open_url", {url:r.url}).catch(e => toast(String(e), "warn", 6000));
+  $("update-later").onclick = () => { dismissedUpdate = r.latest; renderUpdateNotice(); };
+}
+function scheduleUpdateCheck() {
+  if (S.cfg.checkUpdates) setTimeout(() => {
+    if (S.cfg.checkUpdates) checkUpdate(false);
+  }, 4000);
+}
+async function checkUpdate(manual = false) {
   try {
-    const r = await invoke("check_update");
-    S.update = r;
-    const badge = $("update-badge");
-    badge.style.display = r.newer ? "inline-flex" : "none";
-    badge.title = t("upd.available", { v: r.latest });
-    badge.onclick = () => invoke("open_url", { url: r.url }).catch(() => {});
-    if (manual) {
-      toast(r.newer ? t("upd.available", { v: r.latest }) : t("upd.latest", { v: r.current }), "ok", 6000);
-    }
+    // Ручна й фонова перевірки ділять один запит.
+    if (!updateCheckPromise) updateCheckPromise = invoke("check_update");
+    S.update = await updateCheckPromise;
+    if (manual) dismissedUpdate = "";
+    renderUpdateNotice();
+    if (manual && !S.update.newer) toast(t("upd.latest", {v:S.update.current}), "ok", 6000);
   } catch (e) {
     if (manual) toast(String(e), "warn", 6000);
+  } finally {
+    updateCheckPromise = null;
   }
 }
 
@@ -1331,6 +1351,8 @@ function wireResizer() {
   $("quick-filter").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.q === S.quick));
   $("log-wrap").classList.toggle("primary", !S.logWrap);
 
+  // Не чекаємо повільних або недоступних серверів для перевірки версії.
+  scheduleUpdateCheck();
   await loadProfiles();
   await loadProjects();
   fillProfileForm(null);
@@ -1352,7 +1374,6 @@ function wireResizer() {
 
   refreshForwards();
   syncMonitor();                       // фонові монітори для порогових алертів
-  if (S.cfg.checkUpdates) setTimeout(() => checkUpdate(false), 4000);
   // повне оновлення — рідко, список контейнерів — часто: він і дає відчуття
   // «стан змінився одразу», але коштує один дешевий запит
   armPolling();

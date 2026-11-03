@@ -5,7 +5,7 @@
 **Docker, servers and databases in one native window.**
 
 A fast desktop client for managing Docker over local socket, TCP or SSH —
-containers, logs, files, terminals, host metrics and a read-only database browser.
+containers, logs, files, terminals, host metrics, a database browser, SQL console and database exports.
 
 [![Latest release](https://img.shields.io/github/v/release/YuraYarmola/Prystan)](https://github.com/YuraYarmola/Prystan/releases/latest)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
@@ -23,18 +23,21 @@ containers and addresses in them are invented.*
 
 ---
 
-## New in 0.4.0
+## New in 0.5.0
 
-Browse **PostgreSQL, MySQL/MariaDB, ClickHouse and Redis** alongside your containers.
-Discover databases on the selected server, inspect tables and their sizes, filter
-and sort row previews, or explore Redis keys. The embedded Adminer-style interface
-uses fixed read operations; successful connections can be remembered securely in
-the OS credential store.
+Run **SQL** directly against PostgreSQL, MySQL/MariaDB and ClickHouse, view results
+and export JSON or CSV for Excel. Changes require explicit enablement and confirmation.
+Open recognized databases from their containers and download a database dump with
+one click. A permanent server Dashboard button and a background startup update
+offer make navigation and keeping Prystan current easier.
 
-![Database overview with row counts and storage sizes](docs/screenshots/database-overview.png)
+The table browser remains available on read-only profiles; arbitrary SQL is blocked
+there. Exports have engine-specific consistency limits — see the [database guide](#databases).
 
-[Database guide](#databases) · [Changes since 0.3.0](CHANGELOG.md#040--2026-10-23) ·
-[Download 0.4.0](https://github.com/YuraYarmola/Prystan/releases/tag/v0.4.0)
+![SQL console and result export](docs/screenshots/database-sql.png)
+
+[Database guide](#databases) · [Changes since 0.4.0](CHANGELOG.md#050--2026-11-03) ·
+[Download 0.5.0](https://github.com/YuraYarmola/Prystan/releases/tag/v0.5.0)
 
 ## Why
 
@@ -53,7 +56,7 @@ host metrics and database previews into one window.
 | Multi-server over SSH | **✅ built in** | ⚠️ contexts only | agents required | via `DOCKER_HOST` |
 | Container file manager + editor | **✅** | basic | limited | ❌ |
 | Host monitoring & processes | **✅** | ❌ | ❌ | ❌ |
-| Read-only SQL and Redis browser | **✅ built in** | — | — | — |
+| Database browser, SQL console and exports | **✅ built in** | — | — | — |
 | Full-history log search | **✅ server-side** | buffer only | buffer only | ❌ |
 | Nothing installed on the server | **✅** | — | ❌ | ✅ |
 
@@ -317,7 +320,7 @@ tables. Redis exposes a database number, key-pattern search through `SCAN`, and
 bounded previews for strings, hashes, lists, sets, sorted sets and streams. A SCAN
 batch can be empty before its cursor reaches zero; use **Continue scan**.
 
-This mode only offers fixed read operations. PostgreSQL uses a read-only session,
+The table browser uses fixed read operations. PostgreSQL uses a read-only session,
 MySQL a read-only transaction, ClickHouse `readonly=1`, and Redis an allowlist of
 read commands. It works on read-only server profiles. Results stay in memory,
 isolated by server. **Remember after successful connection** is enabled by default:
@@ -335,6 +338,40 @@ For ClickHouse, **Import password from YAML** reads a local file with
 `admin` after import; other secrets are ignored. The file is parsed locally,
 never uploaded. A successfully used imported password follows the same remembering
 option; unused imported credentials are cleared with the session.
+
+Open a recognized database directly from its container row, context menu or details
+header. The connection form keeps you on that server and source. The server
+**Dashboard** also remains available beside the main navigation modes.
+
+Choose **SQL** for a single SQL statement (up to 64 KiB), then press **Ctrl+Enter**.
+The default read mode accepts SELECT/WITH and enables native read-only settings.
+Enable changes explicitly for other statements; every execution then asks for
+confirmation with the exact SQL and target. Arbitrary SQL is disabled entirely on
+read-only server profiles. Database account permissions still apply. There is no
+automatic rollback or retry: a failed or timed-out write may already have applied.
+Results show up to 1,000 rows within the 1 MiB / 20-second transport budget. Export
+that result as JSON or UTF-8 CSV for Excel; CSV guards text beginning with formula
+characters. This exports the returned result, not the entire database.
+
+**Download dump** streams the selected database into your local Downloads folder;
+no server backup files are created. Failed exports remove their partial local file.
+The export stops at 2 GiB or about ten minutes. It can still consume server resources.
+
+- PostgreSQL: custom-format `.dump`, restored with `pg_restore`; a consistent snapshot,
+  without owner/ACL export, and at most two seconds waiting for a schema lock.
+- MySQL/MariaDB: SQL with `--single-transaction --quick --skip-lock-tables`;
+  consistent for transactional tables such as InnoDB, not all storage engines.
+  Avoid schema changes during export. Restore into a separate empty server first.
+- ClickHouse: schema and SQLInsert data, one table at a time; no database-wide
+  snapshot. Materialized, Distributed and internal tables are rejected explicitly.
+- Redis 7+: logical `.redis.jsonl` containing hex keys, serialized DUMP values and
+  absolute expiry times; SCAN plus read-only Lua, without BGSAVE. It is not an RDB
+  or an atomic snapshot. Restore requires a separate manual RESTORE workflow;
+  individual serialized values above 128 KiB are rejected rather than truncated.
+
+Dumps contain database data and must be stored securely. No restore is run against
+the source. PostgreSQL/MySQL exports also require `pg_dump` / `mysqldump` or
+`mariadb-dump` on that source.
 
 The source must provide `sh`, `timeout` and its native CLI: `psql`, `mysql` or
 `mariadb` with JSON functions (MySQL 5.7+/MariaDB 10.2+), `clickhouse-client`, or
@@ -451,7 +488,7 @@ Stored locally and clearable.
 | Shell | the default shell for container terminals |
 | Ask before deleting | confirmation dialogs for destructive actions |
 | Editor to the side | dock the editor instead of covering the window |
-| Check for updates | one request to GitHub Releases at startup |
+| Check for updates | background startup check with a dismissible download prompt |
 | Indicator animations | the healthy/unhealthy pulse; off saves a little more GPU |
 | Demo mode | invented data instead of real |
 
